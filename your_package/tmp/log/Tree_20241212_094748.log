@@ -1,0 +1,12 @@
+2024-12-12 09:47:48,718 - INFO - Logging initialized.
+2024-12-12 09:47:48,718 - INFO - Loading tree from: path/to/treefile.tre
+2024-12-12 09:47:48,718 - INFO - Initialized tree from file: path/to/treefile.tre
+2024-12-12 09:47:48,720 - INFO - Tree diameter: 2.534245252609253
+2024-12-12 09:47:48,722 - INFO - Retrieved terminal names for tree: treefile.tre
+2024-12-12 09:47:48,726 - INFO - Computed distance matrix for tree: treefile.tre
+2024-12-12 09:47:48,726 - INFO - Initiating naive embedding of the tree in hyperbolic space.
+2024-12-12 09:47:56,259 - INFO - Retrieved terminal names for tree: treefile.tre
+2024-12-12 09:47:56,262 - INFO - Naive hyperbolic embedding completed.
+2024-12-12 09:47:56,264 - INFO - Object successfully saved to tmp/Results/20241212_094748/hyperbolic_space.pkl
+2024-12-12 09:47:56,265 - INFO - Initializing PCA
+2024-12-12 09:47:56,265 - INFO - Embedding validation complete.
