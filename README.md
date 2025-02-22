@@ -586,8 +586,8 @@ The `rotate` method allows you to rotate the points in Euclidean space by applyi
 ```
 
 
-<img src="https://github.com/puoya/HyperTree/blob/main/images/euclidean_rotation.png" alt="GitHub Logo" width="500"/>
-
+<!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/euclidean_rotation.png" alt="GitHub Logo" width="500"/> -->
+![GitHub Logo](images/euclidean_rotation.png)
 
 ## `center`,`centroid`, and `distance_matrix`  Methods
 The `center` method centers the points in Euclidean space by subtracting the `centroid` from each point. This operation shifts the points so that their `centroid` becomes the origin. The `centroid` method computes the geometric center of the points in Euclidean space by calculating the mean of each dimension.
@@ -802,8 +802,8 @@ tensor([[ 0.2500],
 ```
 
 
-<img src="https://github.com/puoya/HyperTree/blob/main/images/poincare_translation.png" alt="GitHub Logo" width="1000"/>
-
+<!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/poincare_translation.png" alt="GitHub Logo" width="1000"/> -->
+![GitHub Logo](images/poincare_translation.png)
 
 ```python
 >>> fig, axs = plt.subplots(1, 2, figsize=(14, 7))
@@ -837,8 +837,8 @@ tensor([[ 0.2500],
 >>> plt.show()
 ```
 
-<img src="https://github.com/puoya/HyperTree/blob/main/images/rotation_poincare.png" alt="GitHub Logo" width="1000"/>
-
+<!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/rotation_poincare.png" alt="GitHub Logo" width="1000"/> -->
+![GitHub Logo](images/rotation_poincare.png)
 
 # LoidEmbedding Class
 
@@ -1021,8 +1021,8 @@ tensor([[ 1.0000e+00],
 >>> plt.show()
 ```
 
-<img src="https://github.com/puoya/HyperTree/blob/main/images/loid_translate.png" alt="GitHub Logo" width="500"/>
-
+<!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/loid_translate.png" alt="GitHub Logo" width="500"/> -->
+![GitHub Logo](images/loid_translate.png)
 
 ```python
 >>> theta = np.radians(30)
@@ -1038,7 +1038,8 @@ tensor([[ 1.0000e+00],
 ```
 
 
-<img src="https://github.com/puoya/HyperTree/blob/main/images/loid_rotation.png" alt="GitHub Logo" width="500"/>
+<!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/loid_rotation.png" alt="GitHub Logo" width="500"/> -->
+![GitHub Logo](images/loid_rotation.png)
 
 # `EuclideanProcrustes` Class
 The `EuclideanProcrustes` class performs Euclidean orthogonal Procrustes analysis, which is a method used to align one embedding (source) to another embedding (target) by finding the best-fitting orthogonal transformation (rotation and translation). This process minimizes the alignment error between the two embeddings, making them as similar as possible in Euclidean space.
@@ -1135,8 +1136,8 @@ This example demonstrates the effect of adding Gaussian noise to the target embe
 This plot demonstrates how the alignment error increases as more noise is added to the target embedding, showing the robustness of the Procrustes analysis under varying levels of distortion.
 
 
-<img src="https://github.com/puoya/HyperTree/blob/main/images/noisy_euclidean_procrustes.png" alt="GitHub Logo" width="500"/>
-
+<!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/noisy_euclidean_procrustes.png" alt="GitHub Logo" width="500"/> -->
+![GitHub Logo](images/noisy_euclidean_procrustes.png)
 
 # `HyperbolicProcrustes` Class
 
@@ -1253,8 +1254,8 @@ This plot demonstrates how the alignment error increases as more noise is added 
 
 
 
-<img src="https://github.com/puoya/HyperTree/blob/main/images/hyperbolic_procrustes_random.png" alt="GitHub Logo" width="500"/>
-
+<!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/hyperbolic_procrustes_random.png" alt="GitHub Logo" width="500"/> -->
+![GitHub Logo](images/hyperbolic_procrustes_random.png)
 
 
 
