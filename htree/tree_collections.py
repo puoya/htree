@@ -9,13 +9,12 @@ import numpy as np
 import treeswift as ts
 import seaborn as sns
 import matplotlib.patches as patches
-
 from datetime import datetime
-import config, utils, embedding
 import matplotlib.pyplot as plt
+from . import conf, utils, embedding
 
 from collections.abc import Collection
-from typing import Union, Set, Optional, List, Callable, Tuple, Dict
+from typing import Union, Set, Optional, List, Callable, Tuple, Dict, Iterator
 
 #############################################################################################
 # Class for handling tree operations using treeswift and additional utilities.
@@ -49,8 +48,7 @@ class Tree:
         else:
             raise ValueError("Expected a single file path or a name and treeswift.Tree object.")
 
-
-    def _setup_logging(self, log_dir: str = config.LOG_DIR, log_level: int = logging.INFO, 
+    def _setup_logging(self, log_dir: str = conf.LOG_DIRECTORY, log_level: int = logging.INFO, 
                        log_format: str = '%(asctime)s - %(levelname)s - %(message)s') -> None:
         """
         Configure logging.
@@ -124,7 +122,7 @@ class Tree:
         
         return ts.read_tree_newick(file_path)
 
-    def save_tree(self, file_path: str, format: str = 'newick') -> None:
+    def save(self, file_path: str, format: str = 'newick') -> None:
         """
         Save the tree to a file in the specified format.
 
@@ -201,7 +199,6 @@ class Tree:
             self._log_info(f"Tree normalized with scale factor: {scale_factor}")
         else:
             self._log_info(f"Tree diameter is zero and cannot be normalized.")
-
     
     def embed(self, dimension: int, geometry: str = 'hyperbolic', **kwargs) -> 'Embedding':
         """
@@ -231,12 +228,12 @@ class Tree:
 
         if dimension is None:
             raise ValueError("The 'dimension' parameter is required.")
-        accurate        = kwargs.get('accurate', config.ACCURATE)
-        total_epochs    = kwargs.get('total_epochs', config.TOTAL_EPOCHS)
-        initial_lr      = kwargs.get('initial_lr', config.LEARNING_RATE_INIT)
-        max_diameter    = kwargs.get('max_diameter', config.MAX_DIAM)
-        enable_save     = kwargs.get('enable_save', config.ENABLE_SAVE)
-        enable_movie    = kwargs.get('enable_movie', config.ENABLE_MOVIE)
+        accurate        = kwargs.get('accurate', conf.ENABLE_ACCURATE_OPTIMIZATION)
+        total_epochs    = kwargs.get('total_epochs', conf.TOTAL_EPOCHS)
+        initial_lr      = kwargs.get('initial_lr', conf.INITIAL_LEARNING_RATE)
+        max_diameter    = kwargs.get('max_diameter', conf.MAX_RANGE)
+        enable_save     = kwargs.get('enable_save', conf.ENABLE_SAVE_MODE)
+        enable_movie    = kwargs.get('enable_movie', conf.ENABLE_VIDEO_EXPORT)
         learning_rate   = kwargs.get('learning_rate', None)
         scale_learning  = kwargs.get('scale_learning', None)
         weight_exponent = kwargs.get('weight_exponent', None)
@@ -333,9 +330,9 @@ class Tree:
 
         if enable_movie and accurate:
             self._create_figures()
-            fps = total_epochs // config.MOVIE_LENGTH 
+            fps = total_epochs // conf.VIDEO_LENGTH 
             self._create_movie(fps = fps)
-        directory = f'{config.RESULTS_DIR}/{self._current_time}'
+        directory = f'{conf.OUTPUT_DIRECTORY}/{self._current_time}'
         os.makedirs(directory, exist_ok=True)
         filename = f'{geometry}_space.pkl'
         filepath = f'{directory}/{filename}'
@@ -359,9 +356,9 @@ class Tree:
         Create and save figures based on RE matrices and distance matrices.
         """
         timestamp = self._current_time
-        output_dir = f'{config.IMAGE_DIR}/{timestamp}'
+        output_dir = f'{conf.OUTPUT_FIGURES_DIRECTORY}/{timestamp}'
         os.makedirs(output_dir, exist_ok=True)
-        path = f'{config.RESULTS_DIR}/{timestamp}'
+        path = f'{conf.OUTPUT_DIRECTORY}/{timestamp}'
         weight_history = -np.load(os.path.join(path, "weight_history.npy"))
         lr_history = np.log10(np.abs(np.load(os.path.join(path, "lr_history.npy"))))        
         npy_files = sorted([f for f in os.listdir(path) if f.startswith('RE') and f.endswith('.npy')],
@@ -374,7 +371,7 @@ class Tree:
         else:
             flag = False
 
-        log10_distance_matrix = np.log10(self.distance_matrix() + config.EPS)
+        log10_distance_matrix = np.log10(self.distance_matrix() + conf.EPSILON)
         mask = np.eye(log10_distance_matrix.shape[0], dtype=bool)
 
         rms_values = []
@@ -383,7 +380,7 @@ class Tree:
         max_heatplot = float('-inf')
         for file_name in npy_files:
             re_matrix = np.load(os.path.join(path, file_name))
-            log10_re_matrix = np.log10(re_matrix + config.EPS)
+            log10_re_matrix = np.log10(re_matrix + conf.EPSILON)
             np.fill_diagonal(log10_re_matrix, np.nan)
             current_min = np.nanmin(log10_re_matrix)
             current_max = np.nanmax(log10_re_matrix)
@@ -410,7 +407,7 @@ class Tree:
             epoch = int(file_name.split('_')[1].split('.')[0])
             save_path = os.path.join(output_dir, f'heatmap_{epoch}.png')
 
-            log10_re_matrix = np.log10(np.load(os.path.join(path, file_name)) + config.EPS)
+            log10_re_matrix = np.log10(np.load(os.path.join(path, file_name)) + conf.EPSILON)
 
             fig = plt.figure(figsize=(12, 12), tight_layout=True)
             gs = fig.add_gridspec(4, 2, height_ratios=[1, 1, 2, 2], width_ratios=[1, 1])
@@ -497,10 +494,10 @@ class Tree:
         """
         
         timestamp = self._current_time    
-        output_dir = f'{config.MOVIE_DIR}/{timestamp}'
+        output_dir = f'{conf.OUTPUT_VIDEO_DIRECTORY}/{timestamp}'
         os.makedirs(output_dir, exist_ok=True)
 
-        image_dir = f'{config.IMAGE_DIR}/{timestamp}'
+        image_dir = f'{conf.OUTPUT_FIGURES_DIRECTORY}/{timestamp}'
         image_files = [f for f in os.listdir(image_dir) if f.endswith('.png')]
 
         # Custom sorting function to sort filenames numerically based on the heatmap number
@@ -540,42 +537,82 @@ class Tree:
 #############################################################################################
 #############################################################################################
 class MultiTree:
-    def __init__(self, *source: Union[str, List['Tree'], Dict[str, 'Tree']], enable_logging: bool = False):
+    def __init__(self, *source: Union[str, List[Union['Tree', 'ts.Tree']]], enable_logging: bool = False):
         """
         Initialize a MultiTree object. Load trees from a source, which can be:
          -- a string (file path); trees are loaded from the file
-         -- a list of Tree objects with an accompanying string (name)
-         -- a dictionary of Tree objects with an accompanying string (name)
+         -- a list of Tree objects
+         -- a list of treeswift.Tree objects (automatically wrapped in Tree instances)
 
         Parameters:
         enable_logging (bool): Flag to enable or disable logging.
         """
-
         self._logger = None
         self._current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         if enable_logging:
             self._setup_logging()
 
+        self.trees = []  # Store trees as a list instead of a dictionary
         if len(source) == 1 and isinstance(source[0], str):
             # If the input is a file path, load trees from file
             file_path = source[0]
             self.name = os.path.basename(file_path)
-            tree_list = self._load_trees(file_path)
-            self.trees = self._create_tree_dict(tree_list)
+            self.trees = self._load_trees(file_path)
             self._log_info(f"Initialized MultiTree with trees from file: {file_path}")
         elif len(source) == 2 and isinstance(source[0], str) and isinstance(source[1], list):
-            # If the input is a list of Tree objects with a name
+            # If the input is a list of Tree objects or treeswift.Tree objects
             self.name = source[0]
-            self.trees = {str(cnt):Tree(str(cnt),tree) for cnt, tree in enumerate(source[1])}
-            self._log_info(f"Initialized MultiTree with a list of Tree objects. Name: {self.name}")
-        elif len(source) == 2 and isinstance(source[0], str) and isinstance(source[1], dict):
-            # If the input is a dictionary of Tree objects with a name
-            self.name = source[0]
-            self.trees = {key: Tree(key, tree) for key, tree in source[1].items()}
-
-            self._log_info(f"Initialized MultiTree with a dictionary of Tree objects. Name: {self.name}")
+            if all(isinstance(t, Tree) for t in source[1]):
+                self.trees = source[1]  # Use as-is if they are Tree instances
+            elif all(isinstance(t, ts.Tree) for t in source[1]):
+                self.trees = [Tree(f"Tree_{i}", ts_tree) for i, ts_tree in enumerate(source[1])]
+            else:
+                raise ValueError("All elements in the list must be either Tree or treeswift.Tree instances.")
+            self._log_info(f"Initialized MultiTree with a list of trees. Name: {self.name}")
         else:
-            raise ValueError("Provide a valid source: a file path as a string, a name (string) and a list of Tree objects, or a name (string) and a dictionary of Tree objects.")
+            raise ValueError("Provide a valid source: a file path as a string or a name (string) and a list of Tree or treeswift.Tree objects.")
+
+    def __getitem__(self, index: Union[int, slice]) -> Union['Tree', 'MultiTree']:
+        """
+        Make MultiTree subscriptable. Allows retrieving individual trees or a sub-MultiTree.
+        """
+        if isinstance(index, slice):
+            return MultiTree(self.name, self.trees[index])
+        return self.trees[index]
+
+    def __len__(self) -> int:
+        """Return the number of trees in the MultiTree."""
+        length = len(self.trees)
+        self._log_info(f"Number of trees: {length}")
+        return len(self.trees)
+
+    def __iter__(self) -> Iterator['Tree']:
+        """Allow iteration over the trees in MultiTree."""
+        self._log_info("Returning an iterator over trees.")
+        return iter(self.trees)
+
+    def __contains__(self, item) -> bool:
+        """
+        Check if an item is in the collection.
+
+        Parameters:
+        item: The item to check for.
+
+        Returns:
+        bool: True if the item is in the collection, False otherwise.
+        """
+        contains = item in self.trees
+        self._log_info(f"Item {'is' if contains else 'is not'} in MultiTree.")
+        return contains
+
+    def __repr__(self) -> str:
+        """
+        Return a string representation of the MultiTree object.
+        """
+        repr_str = f"MultiTree({self.name}, {len(self.trees)} trees)"
+        self._log_info(f"Representation: {repr_str}")
+        return repr_str
+
 
     def _load_trees(self, file_path: str) -> List['Tree']:
         """
@@ -596,22 +633,7 @@ class MultiTree:
             raise ValueError(f"Failed to load trees from {file_path}: {e}")
         return tree_list
 
-    def _create_tree_dict(self, tree_list: List['Tree']) -> Dict[str, 'Tree']:
-        """
-        Create a dictionary of trees from a list of Tree objects.
-        Keys will be the tree names, and if there are duplicate names, indices will be used.
-        """
-        tree_dict = {}
-        name_count = {}
-        for idx, tree in enumerate(tree_list):
-            tree_name = tree.name
-            if tree_name in tree_dict:
-                name_count[tree_name] = name_count.get(tree_name, 1) + 1
-                tree_name = f"{tree_name}_{name_count[tree_name]}"
-            tree_dict[tree_name] = tree
-        return tree_dict
-
-    def _setup_logging(self, log_dir: str = config.LOG_DIR, log_level: int = logging.INFO, log_format: str = '%(asctime)s - %(levelname)s - %(message)s'):
+    def _setup_logging(self, log_dir: str = conf.LOG_DIRECTORY, log_level: int = logging.INFO, log_format: str = '%(asctime)s - %(levelname)s - %(message)s'):
         """
         Set up logging configuration.
         """
@@ -635,14 +657,14 @@ class MultiTree:
         self._log_info(f"MultiTree '{self.name}' copied.")
         return multitree_copy
 
-    def save_trees(self, file_path: str, format: str = 'newick') -> None:
+    def save(self, file_path: str, format: str = 'newick') -> None:
         """
         Save all trees to a file in the specified format.
         """
         if format == 'newick':
             try:
                 with open(file_path, 'w') as f:
-                    for _, tree in self.trees.items():
+                    for tree in self.trees:
                         f.write(tree.contents.newick() + "\n")
                 self._log_info(f"Trees saved to {file_path} in {format} format.")
             except Exception as e:
@@ -682,7 +704,7 @@ class MultiTree:
         stacked_counts = torch.zeros((len(self.trees),n, n))
         cnt = 0
 
-        for _, tree in self.trees.items():
+        for tree in self.trees:
             labels = tree.terminal_names()
             idx = [all_labels.index(label) for label in labels]
             idx = torch.tensor(idx)
@@ -741,7 +763,7 @@ class MultiTree:
             List[str]: List of terminal names.
         """
         leaf_names = set()
-        for _, tree in self.trees.items():
+        for tree in self.trees:
             leaf_names.update(tree.terminal_names())
         leaf_names = sorted(leaf_names)
         self._log_info(f"Retrieved terminal names for MultiTree: {self.name}")
@@ -776,11 +798,11 @@ class MultiTree:
             raise ValueError("The 'dimension' parameter is required.")
         
         # Extract and set parameters for embedding
-        accurate = kwargs.get('accurate', config.ACCURATE)
-        total_epochs = kwargs.get('total_epochs', config.TOTAL_EPOCHS)
-        initial_lr = kwargs.get('initial_lr', config.LEARNING_RATE_INIT)
-        max_diameter = kwargs.get('max_diameter', config.MAX_DIAM)
-        enable_save = kwargs.get('enable_save', config.ENABLE_SAVE)
+        accurate = kwargs.get('accurate', conf.ENABLE_ACCURATE_OPTIMIZATION)
+        total_epochs = kwargs.get('total_epochs', conf.TOTAL_EPOCHS)
+        initial_lr = kwargs.get('initial_lr', conf.INITIAL_LEARNING_RATE)
+        max_diameter = kwargs.get('max_diameter', conf.MAX_RANGE)
+        enable_save = kwargs.get('enable_save', conf.ENABLE_SAVE_MODE)
         learning_rate = kwargs.get('learning_rate', None)
         scale_learning = kwargs.get('scale_learning', None)
         weight_exponent = kwargs.get('weight_exponent', None)
@@ -790,7 +812,7 @@ class MultiTree:
                 # Constants and initial setup
                 diameters = []
                 distance_matrices = []
-                for _, tree in self.trees.items():
+                for tree in self.trees:
                     diameters.append(tree.diameter())
                 diameters = torch.tensor(diameters)
 
@@ -800,10 +822,11 @@ class MultiTree:
 
                 # Naive hyperbolic embedding
                 multi_embeddings = embedding.MultiEmbedding()
-                for name, tree in self.trees.items():
+                for name, tree in enumerate(self.trees):
                     self._log_info(f"Initiating naive embedding of {name} in hyperbolic space.")
+                    # print(tree.distance_matrix(),scale_factor)
                     distance_matrix = tree.distance_matrix() * scale_factor
-                    distance_matrices[tree.name] = distance_matrix
+                    distance_matrices[name] = distance_matrix
                     n = distance_matrix.size(0)
                     gramian = -torch.cosh(distance_matrix)
                     points = utils.lgram_to_points(gramian, dimension).detach()
@@ -813,15 +836,15 @@ class MultiTree:
                         points[0,n] = torch.sqrt(1+torch.sum(points[1:,n]**2))
 
                     # Initialize Loid embedding
-                    multi_embeddings.add_embedding(name, embedding.LoidEmbedding(   points      = points, 
-                                                                                    labels      = tree.terminal_names(), 
-                                                                                    curvature   = initial_curvature))
+                    multi_embeddings.add_embedding(embedding.LoidEmbedding( points      = points, 
+                                                                            labels      = tree.terminal_names(), 
+                                                                            curvature   = initial_curvature))
                     self._log_info(f"Naive hyperbolic embedding of {name} is completed.")
                 # Precise hyperbolic embedding
                 if accurate:
                     initial_tangents = {}
                     self._log_info("Initiating precise hyperbolic embedding.")
-                    for name, tree in self.trees.items():
+                    for name, tree in enumerate(self.trees):
                         initial_tangents[name] =  utils.hyperbolic_log(multi_embeddings.embeddings[name].points)
 
                     tangents_dic, consensus_scale = utils.hyperbolic_embedding_consensus(distance_matrices,
@@ -836,7 +859,7 @@ class MultiTree:
                                                                                          enable_save        = enable_save,
                                                                                          time               = self._current_time
                                                                                          )
-                    for name, tree in self.trees.items():
+                    for name, tree in enumerate(self.trees):
                         multi_embeddings.embeddings[name].points    = utils.hyperbolic_exponential(tangents_dic[name])
                         multi_embeddings.embeddings[name].curvature = (multi_embeddings.embeddings[name].curvature)*consensus_scale
                     self._log_info("Precise hyperbolic embedding completed.")
@@ -855,7 +878,7 @@ class MultiTree:
                 # Naive hyperbolic embedding
                 
                 multi_embeddings = embedding.MultiEmbedding()
-                for name, tree in self.trees.items():
+                for name, tree in enumerate(self.trees):
                     self._log_info(f"Initiating naive embedding of {name} in hyperbolic space.")
                     distance_matrix = tree.distance_matrix()
                     distance_matrices[name] = distance_matrix
@@ -897,7 +920,7 @@ class MultiTree:
                                                            time             = self._current_time
                                                            )
                         self._log_info(f"Precise euclidean embedding of {name} is completed.")
-                    multi_embeddings.add_embedding(name, embedding.EuclideanEmbedding(points=points,labels=tree.terminal_names()))
+                    multi_embeddings.add_embedding(embedding.EuclideanEmbedding(points=points,labels=tree.terminal_names()))
             except ValueError as ve:
                 self._log_info(f"Value error during euclidean embedding: {ve}")
                 raise
@@ -908,7 +931,7 @@ class MultiTree:
                 self._log_info(f"Unexpected error during euclidean embedding: {e}")
                 raise
                 
-        directory = f'{config.RESULTS_DIR}/{self._current_time}'
+        directory = f'{conf.OUTPUT_DIRECTORY}/{self._current_time}'
         os.makedirs(directory, exist_ok=True)
         filename = f'{geometry}_spaces.pkl'
         filepath = f'{directory}/{filename}'
@@ -927,48 +950,3 @@ class MultiTree:
             raise
         
         return multi_embeddings
-
-
-    def __iter__(self) -> Collection['Tree']:
-        """
-        Return an iterator over the trees.
-
-        Returns:
-        Collection[Tree]: An iterator over the Tree objects.
-        """
-        self._log_info("Returning an iterator over trees.")
-        return iter(self.trees)
-
-
-    def __len__(self) -> int:
-        """
-        Return the number of trees.
-
-        Returns:
-        int: The number of Tree objects in the MultiTree.
-        """
-        length = len(self.trees)
-        self._log_info(f"Number of trees: {length}")
-        return length
-
-    def __contains__(self, item) -> bool:
-        """
-        Check if an item is in the collection.
-
-        Parameters:
-        item: The item to check for.
-
-        Returns:
-        bool: True if the item is in the collection, False otherwise.
-        """
-        contains = item in self.trees
-        self._log_info(f"Item {'is' if contains else 'is not'} in MultiTree.")
-        return contains
-
-    def __repr__(self) -> str:
-        """
-        Return a string representation of the MultiTree object.
-        """
-        repr_str = f"MultiTree({self.name}, {len(self.trees)} trees)"
-        self._log_info(f"Representation: {repr_str}")
-        return repr_str

@@ -6,7 +6,7 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'hypertree'
+project = 'htree'
 copyright = '2024, Puoya Tabaghi'
 author = 'Puoya Tabaghi'
 release = '09-14-2024'

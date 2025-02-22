@@ -1,3 +1,25 @@
+Metadata-Version: 2.2
+Name: htree
+Version: 2.3.0
+Summary: A library for tree reading, embedding, and analysis of phylogenetic trees
+Author-email: Puoya Tabaghi <ptabaghi@ucsd.edu>
+License: MIT
+Project-URL: Homepage, https://puoya.github.io/codes/hypertree.html
+Project-URL: Repository, https://github.com/puoya/HyperTree
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy>=1.22.4
+Requires-Dist: scipy>=1.7.1
+Requires-Dist: matplotlib>=3.4.3
+Requires-Dist: scikit-learn>=0.24.2
+Requires-Dist: seaborn>=0.11.2
+Requires-Dist: torch>=1.10.0
+Requires-Dist: treeswift>=1.0.0
+Requires-Dist: tqdm>=4.60.0
+Requires-Dist: imageio>=2.9.0
+Requires-Dist: imageio-ffmpeg
+
 
 # Phylogenetic Tree Embedding
 
@@ -557,8 +579,7 @@ The `translate` method shifts all points in Euclidean space by a specified vecto
 In this example, a regular pentagon is translated by a randomly generated 2D vector, and the changes in the points are visualized on a plot.
 
 
-<!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/euclidean_translation.png" alt="GitHub Logo" width="500"/> -->
-![GitHub Logo](images/euclidean_translation.png)
+<img src="https://github.com/puoya/HyperTree/blob/main/images/euclidean_translation.png" alt="GitHub Logo" width="500"/>
 
 This demonstrates the effect of the `translate` method on the pentagon's vertices, illustrating how the points move to their new positions.
 

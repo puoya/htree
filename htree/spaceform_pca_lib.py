@@ -1,7 +1,7 @@
 import numpy as np
 import logging
 from scipy.sparse.linalg import eigs
-import config
+from . import conf
 
 class Subspace:
     """
@@ -109,7 +109,7 @@ def normalize(vec):
         A tuple containing the normalized vector and a boolean indicating whether additional hyperbolic normalization was performed.
     """
     valid = False
-    threshold = config.atol ** 2
+    threshold = conf.ERROR_TOLERANCE ** 2
 
     # Compute the Euclidean norm of the vector
     euclidean_norm = np.linalg.norm(vec)
@@ -233,7 +233,7 @@ def init_eigvec(Cx, target_sign, eigvals, eigvecs, eigsigns):
     """
     res_Cx = compute_residual(Cx, eigvals, eigvecs)
     dim = res_Cx.shape[0] - 1
-    tol = config.atol
+    tol = conf.ERROR_TOLERANCE
     J = np.eye(dim + 1)
     J[0, 0] = -1
 
@@ -334,7 +334,7 @@ def evd(Cx):
     Cxj = Cx @ J
 
     # Constants
-    ev_thresh = config.atol ** 3
+    ev_thresh = conf.ERROR_TOLERANCE ** 3
     max_iters = int(1000*np.sqrt(dim))
 
     eigvals, eigsigns, eigvecs = [], [], []

@@ -1,7 +1,6 @@
 import numpy as np
 import logging
 from datetime import datetime
-from sklearn.decomposition import PCA as SklearnPCA
 import torch
 import spaceform_pca_lib as sfpca
 

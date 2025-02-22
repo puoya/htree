@@ -1,22 +1,8 @@
 import os
-import sys
-import glob
 import torch
-import pickle
-import logging
-import subprocess
-import imageio
-import scipy.stats as stats
 import numpy as np
-import pandas as pd
-import scipy.linalg
-from tqdm import tqdm
-from Bio import Phylo
-from pathlib import Path
 import torch.optim as optim
-from datetime import datetime
-
-import config
+from . import conf
 from torch import Tensor
 from typing import Optional, Any, Tuple
 
@@ -308,9 +294,9 @@ def hyperbolic_embedding(distance_matrix: torch.Tensor, dimension: int, **kwargs
         raise ValueError("The 'distance_matrix' must be a torch.Tensor.")
 
     # Set default values for keyword arguments
-    total_epochs = kwargs.get('total_epochs', config.TOTAL_EPOCHS)
-    initial_lr = kwargs.get('initial_lr', config.LEARNING_RATE_INIT)
-    enable_save = kwargs.get('enable_save', config.ENABLE_SAVE)
+    total_epochs = kwargs.get('total_epochs', conf.TOTAL_EPOCHS)
+    initial_lr = kwargs.get('initial_lr', conf.INITIAL_LEARNING_RATE)
+    enable_save = kwargs.get('enable_save', conf.ENABLE_SAVE_MODE)
     initial_tangents = kwargs.get('initial_tangents', None)
     log_function = kwargs.get('log_function', None)
     learning_rate = kwargs.get('learning_rate', None)
@@ -385,7 +371,7 @@ def hyperbolic_embedding(distance_matrix: torch.Tensor, dimension: int, **kwargs
             log_function(message)
 
         if enable_save and (relative_error is not None):
-            path = f'{config.RESULTS_DIR}/{timestamp}'
+            path = f'{conf.OUTPUT_DIRECTORY}/{timestamp}'
             os.makedirs(path, exist_ok=True)
             # Save relative error to a file
             relative_error_path = os.path.join(path, f"RE_{epoch+1}.npy")
@@ -397,7 +383,7 @@ def hyperbolic_embedding(distance_matrix: torch.Tensor, dimension: int, **kwargs
         scale_factor = scale_factor.detach()
 
     if enable_save:
-        path = f'{config.RESULTS_DIR}/{timestamp}'
+        path = f'{conf.OUTPUT_DIRECTORY}/{timestamp}'
         os.makedirs(path, exist_ok=True)
         weight_path = os.path.join(path, f"weight_history.npy")
         np.save(weight_path, weight_history)
@@ -425,8 +411,8 @@ def hyperbolic_embedding_consensus(distance_matrices, dimension, **kwargs):
     """
     
     # Set default values for keyword arguments
-    total_epochs = kwargs.get('total_epochs', config.TOTAL_EPOCHS)
-    initial_lr = kwargs.get('initial_lr', config.LEARNING_RATE_INIT)
+    total_epochs = kwargs.get('total_epochs', conf.TOTAL_EPOCHS)
+    initial_lr = kwargs.get('initial_lr', conf.INITIAL_LEARNING_RATE)
     initial_tangents = kwargs.get('initial_tangents', None)
     log_function = kwargs.get('log_function', None)
     learning_rate = kwargs.get('learning_rate', None)
@@ -600,7 +586,7 @@ def default_learning_rate(
     if scale_range is None:
         raise ValueError("Scale range must be provided.")
 
-    NO_WEIGHT_EPOCHS = int(config.NO_WEIGHT_RATIO * total_epochs)
+    NO_WEIGHT_EPOCHS = int(conf.NO_WEIGHT_RATIO * total_epochs)
     
     if epoch >= NO_WEIGHT_EPOCHS:
         relevant_losses = loss_list[:NO_WEIGHT_EPOCHS]
@@ -636,8 +622,8 @@ def calculate_multipliers(loss_list: torch.Tensor, total_epochs: int) -> float:
     if total_epochs <= 1:
         raise ValueError("Total epochs must be greater than 1.")
     
-    WINDOW_SIZE = int(config.WINDOW_RATIO * total_epochs)
-    INCREASE_COUNT_MAX = int(config.INCREASE_COUNT_RATIO * WINDOW_SIZE)
+    WINDOW_SIZE = int(conf.WINDOW_RATIO * total_epochs)
+    INCREASE_COUNT_MAX = int(conf.INCREASE_COUNT_RATIO * WINDOW_SIZE)
     
     multipliers = []
     for i in range(1, len(loss_list) + 1):
@@ -649,9 +635,9 @@ def calculate_multipliers(loss_list: torch.Tensor, total_epochs: int) -> float:
         increase_count = sum(1 for x, y in zip(recent_losses[:-1], recent_losses[1:]) if y > x)
         
         if increase_count > INCREASE_COUNT_MAX:
-            multipliers.append(config.DECREASE_FACTOR)
+            multipliers.append(conf.DECREASE_FACTOR)
         elif all(x > y for x, y in zip(recent_losses[:-1], recent_losses[1:])):
-            multipliers.append(config.INCREASE_FACTOR)
+            multipliers.append(conf.INCREASE_FACTOR)
         else:
             multipliers.append(1.0)
     
@@ -676,7 +662,7 @@ def default_scale_learning(epoch: int, total_epochs: int) -> bool:
     if total_epochs <= 1:
         raise ValueError("Total epochs must be greater than 1.")
 
-    return epoch < int(config.CURV_RATIO * total_epochs)
+    return epoch < int(conf.CURV_RATIO * total_epochs)
 ###########################################################################
 ###########################################################################
 ###########################################################################
@@ -697,7 +683,7 @@ def default_weight_exponent(epoch: int, total_epochs: int) -> float:
     if total_epochs <= 1:
         raise ValueError("Total epochs must be greater than 1.")
 
-    no_weight_epochs = int(config.NO_WEIGHT_RATIO * total_epochs)
+    no_weight_epochs = int(conf.NO_WEIGHT_RATIO * total_epochs)
     
     if epoch < no_weight_epochs:
         return 0.0
@@ -726,7 +712,7 @@ def hypebrolic_cost(tangent_vectors: Tensor, distance_matrix: Tensor, **kwargs) 
     scale_factor = kwargs.get('scale_factor', torch.tensor(1.0, dtype=distance_matrix.dtype, device=distance_matrix.device))
     use_unweighted_cost = kwargs.get('use_unweighted_cost', True)
     weight_matrix = kwargs.get('weight_matrix', None)
-    enable_save = kwargs.get('enable_save', config.ENABLE_SAVE)
+    enable_save = kwargs.get('enable_save', conf.ENABLE_SAVE_MODE)
     
     embeddings = hyperbolic_exponential(tangent_vectors)
     flipped_embeddings = embeddings.clone()
@@ -829,9 +815,9 @@ def euclidean_embedding(distance_matrix: torch.Tensor, dimension: int, **kwargs)
         raise ValueError("The 'distance_matrix' must be a torch.Tensor.")
 
     # Set default values for keyword arguments
-    total_epochs = kwargs.get('total_epochs', config.TOTAL_EPOCHS)
-    initial_lr = kwargs.get('initial_lr', config.LEARNING_RATE_INIT)
-    enable_save = kwargs.get('enable_save', config.ENABLE_SAVE)
+    total_epochs = kwargs.get('total_epochs', conf.TOTAL_EPOCHS)
+    initial_lr = kwargs.get('initial_lr', conf.INITIAL_LEARNING_RATE)
+    enable_save = kwargs.get('enable_save', conf.ENABLE_SAVE_MODE)
     initial_points = kwargs.get('initial_points', None)
     log_function = kwargs.get('log_function', None)
     learning_rate = kwargs.get('learning_rate', None)
@@ -889,7 +875,7 @@ def euclidean_embedding(distance_matrix: torch.Tensor, dimension: int, **kwargs)
             print(message)
 
         if enable_save and (relative_error is not None):
-            path = f'{config.RESULTS_DIR}/{timestamp}'
+            path = f'{conf.OUTPUT_DIRECTORY}/{timestamp}'
             os.makedirs(path, exist_ok=True)
             # Save relative error to a file
             relative_error_path = os.path.join(path, f"RE_{epoch+1}.npy")
@@ -899,7 +885,7 @@ def euclidean_embedding(distance_matrix: torch.Tensor, dimension: int, **kwargs)
         points = points.detach()
 
     if enable_save:
-        path = f'{config.RESULTS_DIR}/{timestamp}'
+        path = f'{conf.OUTPUT_DIRECTORY}/{timestamp}'
         os.makedirs(path, exist_ok=True)
         weight_path = os.path.join(path, f"weight_history.npy")
         np.save(weight_path, weight_history)
@@ -927,7 +913,7 @@ def euclidean_cost(points: Tensor, distance_matrix: Tensor, **kwargs) -> Tuple[T
     
     use_unweighted_cost = kwargs.get('use_unweighted_cost', True)
     weight_matrix = kwargs.get('weight_matrix', None)
-    enable_save = kwargs.get('enable_save', config.ENABLE_SAVE)
+    enable_save = kwargs.get('enable_save', conf.ENABLE_SAVE_MODE)
     
     squared_norms = torch.sum(points ** 2, dim=0, keepdim=True)
     

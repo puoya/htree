@@ -6,7 +6,7 @@ import os
 import copy
 from typing import Optional, Union, List
 from datetime import datetime
-import config
+from . import conf
 from torch.optim import Adam
 
 class HyperbolicProcrustes:
@@ -52,7 +52,7 @@ class HyperbolicProcrustes:
         self._validate_embeddings()
         self._compute_mapping(mode = mode)
 
-    def _setup_logging(self, log_dir: str = config.LOG_DIR, log_level: int = logging.INFO, log_format: str = '%(asctime)s - %(levelname)s - %(message)s') -> None:
+    def _setup_logging(self, log_dir: str = conf.LOG_DIRECTORY, log_level: int = logging.INFO, log_format: str = '%(asctime)s - %(levelname)s - %(message)s') -> None:
         """
         Configures logging for the class.
 
@@ -96,7 +96,7 @@ class HyperbolicProcrustes:
             raise ValueError("Source and target embeddings must have the same shape")
         
         # Check for matching curvatures
-        if not torch.isclose(self.source_embedding.curvature, self.target_embedding.curvature, config.atol):
+        if not torch.isclose(self.source_embedding.curvature, self.target_embedding.curvature, conf.ERROR_TOLERANCE):
             self._log_info("Source and target curvatures must be equal")
             raise ValueError("Source and target curvatures must be equal")
         
@@ -338,7 +338,7 @@ class EuclideanProcrustes:
         self._validate_embeddings()
         self._compute_mapping()
 
-    def _setup_logging(self, log_dir: str = config.LOG_DIR, log_level: int = logging.INFO, log_format: str = '%(asctime)s - %(levelname)s - %(message)s') -> None:
+    def _setup_logging(self, log_dir: str = conf.LOG_DIRECTORY, log_level: int = logging.INFO, log_format: str = '%(asctime)s - %(levelname)s - %(message)s') -> None:
         """
         Configures logging for the class.
 

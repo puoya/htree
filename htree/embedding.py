@@ -6,8 +6,7 @@ import os
 import copy
 from typing import Optional, Union, List,Callable
 from datetime import datetime
-import config, utils, embedding, procrustes
-from torch.optim import Adam
+from . import conf, utils, embedding, procrustes
 
 class Embedding:
     """
@@ -49,12 +48,12 @@ class Embedding:
         self._labels = labels if labels is not None else list(range(self._points.shape[1]))
         self._log_info(f"Initialized Embedding with geometry={self._geometry}")
 
-    def _setup_logging(self, log_dir: str = config.LOG_DIR, log_level: int = logging.INFO, log_format: str = '%(asctime)s - %(levelname)s - %(message)s') -> None:
+    def _setup_logging(self, log_dir: str = conf.LOG_DIRECTORY, log_level: int = logging.INFO, log_format: str = '%(asctime)s - %(levelname)s - %(message)s') -> None:
         """
         Set up logging configuration.
 
         Args:
-            log_dir (str): Directory where log files will be saved. Default is config.LOG_DIR.
+            log_dir (str): Directory where log files will be saved. Default is conf.LOG_DIRECTORY.
             log_level (int): Logging level. Default is logging.INFO.
             log_format (str): Format for logging messages. Default is '%(asctime)s - %(levelname)s - %(message)s'.
         """
@@ -448,7 +447,7 @@ class PoincareEmbedding(HyperbolicEmbedding):
         """
         super().__init__(curvature=curvature, points=points, labels=labels, enable_logging=enable_logging)
         self.model = 'poincare'
-        self.norm_constraint = config.poincare_domain
+        self.norm_constraint = conf.POINCARE_DOMAIN
         self._update_dimensions()
         self._validate_norms()
         self._log_info(f"Initialized PoincareEmbedding with curvature={self.curvature} and checked point norms")
@@ -496,17 +495,17 @@ class PoincareEmbedding(HyperbolicEmbedding):
 
     def centroid(self, 
                  mode: str = 'default', 
-                 lr: float = config.frechet_lr, 
-                 max_iter: int = config.frechet_max_iter, 
-                 tol: float = config.frechet_tol) -> torch.Tensor:
+                 lr: float = conf.FRECHET_LEARNING_RATE, 
+                 max_iter: int = conf.FRECHET_MAX_EPOCHS, 
+                 tol: float = conf.FRECHET_ERROR_TOLERANCE) -> torch.Tensor:
         """
         Compute the centroid of the points in the Poincare space.
         
         Args:
             mode (str): The mode to compute the centroid. 
-            lr (float): Learning rate for the optimizer. Default is config.frechet_lr.
-            max_iter (int): Maximum number of iterations. Default is config.frechet_max_iter.
-            tol (float): Tolerance for stopping criterion. Default is config.frechet_tol.
+            lr (float): Learning rate for the optimizer. Default is conf.FRECHET_LEARNING_RATE.
+            max_iter (int): Maximum number of iterations. Default is conf.FRECHET_MAX_EPOCHS.
+            tol (float): Tolerance for stopping criterion. Default is conf.FRECHET_ERROR_TOLERANCE.
         
         Returns:
             torch.Tensor: The centroid of the points.
@@ -525,7 +524,7 @@ class PoincareEmbedding(HyperbolicEmbedding):
 
         elif mode == 'Frechet':
             centroid = self.points.mean(dim=1, keepdim=True).clone().detach().requires_grad_(True)
-            optimizer = Adam([centroid], lr=lr)
+            optimizer = torch.optim.Adam([centroid], lr=lr)
 
             for _ in range(max_iter):
                 optimizer.zero_grad()
@@ -535,7 +534,7 @@ class PoincareEmbedding(HyperbolicEmbedding):
                 optimizer.step()
 
                 if torch.norm(centroid).item() >= 1:
-                    centroid.data = centroid.data / torch.norm(centroid).item() * config.norm_projection
+                    centroid.data = centroid.data / torch.norm(centroid).item() * (1-conf.ERROR_TOLERANCE)
 
                 if torch.norm(centroid.grad) < tol:
                     break
@@ -618,7 +617,7 @@ class PoincareEmbedding(HyperbolicEmbedding):
             R = R.to(self._points.dtype)
         
         I = torch.eye(R.shape[0], dtype=R.dtype, device=R.device)
-        if not torch.allclose(R.T @ R, I, atol=config.atol):
+        if not torch.allclose(R.T @ R, I, atol=conf.ERROR_TOLERANCE):
             self._log_info("The provided matrix is not a valid rotation matrix. Attempting to orthogonalize.")
             R = R @ torch.linalg.inv(self.matrix_sqrtm(R.T @ R))
         
@@ -667,7 +666,7 @@ class LoidEmbedding(HyperbolicEmbedding):
         """
         super().__init__(curvature=curvature, points=points, labels=labels, enable_logging=enable_logging)
         self.model = 'loid'
-        self.norm_constraint = config.loid_domain
+        self.norm_constraint = conf.LOID_DOMAIN
         self._update_dimensions()
         self._validate_norms()
         self._log_info(f"Initialized LoidEmbedding with curvature={self.curvature} and checked point norms")
@@ -749,10 +748,10 @@ class LoidEmbedding(HyperbolicEmbedding):
 
         # Check if R is a rotation matrix (orthogonal for real matrices)
         I = torch.eye(R.shape[0], dtype=R.dtype, device=R.device)
-        cond1 = not torch.allclose(R.T @ R, I, atol=config.atol)
-        cond2 = not torch.isclose(R[0, 0], torch.tensor(1.0, dtype=R.dtype), atol=config.atol)
-        cond3 = not torch.allclose(R[0, 1:], torch.zeros_like(R[0, 1:]), atol=config.atol)
-        cond4 = not torch.allclose(R[1:, 0], torch.zeros_like(R[1:, 0]), atol=config.atol)
+        cond1 = not torch.allclose(R.T @ R, I, atol=conf.ERROR_TOLERANCE)
+        cond2 = not torch.isclose(R[0, 0], torch.tensor(1.0, dtype=R.dtype), atol=conf.ERROR_TOLERANCE)
+        cond3 = not torch.allclose(R[0, 1:], torch.zeros_like(R[0, 1:]), atol=conf.ERROR_TOLERANCE)
+        cond4 = not torch.allclose(R[1:, 0], torch.zeros_like(R[1:, 0]), atol=conf.ERROR_TOLERANCE)
         if cond1 or cond2 or cond3 or cond4:
             self._log_info("The provided matrix is not a valid rotation matrix.")
             raise ValueError("The provided matrix is not a valid rotation matrix.")
@@ -838,17 +837,17 @@ class LoidEmbedding(HyperbolicEmbedding):
 
     def centroid(self, 
                  mode: str = 'default', 
-                 lr: float = config.frechet_lr, 
-                 max_iter: int = config.frechet_max_iter, 
-                 tol: float = config.frechet_tol) -> torch.Tensor:
+                 lr: float = conf.FRECHET_LEARNING_RATE, 
+                 max_iter: int = conf.FRECHET_MAX_EPOCHS, 
+                 tol: float = conf.FRECHET_ERROR_TOLERANCE) -> torch.Tensor:
         """
         Compute the centroid of the points in the Loid space.
         
         Args:
             mode (str): The mode to compute the centroid. 
-            lr (float): Learning rate for the optimizer. Default is config.frechet_lr.
-            max_iter (int): Maximum number of iterations. Default is config.frechet_max_iter.
-            tol (float): Tolerance for stopping criterion. Default is config.frechet_tol.
+            lr (float): Learning rate for the optimizer. Default is conf.FRECHET_LEARNING_RATE.
+            max_iter (int): Maximum number of iterations. Default is conf.FRECHET_MAX_EPOCHS.
+            tol (float): Tolerance for stopping criterion. Default is conf.FRECHET_ERROR_TOLERANCE.
         
         Returns:
             torch.Tensor: The centroid of the points.
@@ -865,7 +864,7 @@ class LoidEmbedding(HyperbolicEmbedding):
         elif mode == 'Frechet':
             X = self.to_poincare(self._points)
             centroid = X.mean(dim=1, keepdim=True).clone().detach().requires_grad_(True)
-            optimizer = Adam([centroid], lr=lr)
+            optimizer = torch.optim.Adam([centroid], lr=lr)
 
             for _ in range(max_iter):
                 optimizer.zero_grad()
@@ -875,7 +874,7 @@ class LoidEmbedding(HyperbolicEmbedding):
                 optimizer.step()
 
                 if torch.norm(centroid).item() >= 1:
-                    centroid.data = centroid.data / torch.norm(centroid).item() * config.norm_projection
+                    centroid.data = centroid.data / torch.norm(centroid).item() * (1-conf.ERROR_TOLERANCE)
 
                 if torch.norm(centroid.grad) < tol:
                     break
@@ -1018,26 +1017,26 @@ class MultiEmbedding:
     for managing and aligning multiple embeddings.
 
     Attributes:
-        embeddings (Dict[str, 'Embedding']): A dictionary where keys are labels and values are embedding instances.
+        embeddings (List['Embedding']): A list of embedding instances.
         _logger (logging.Logger): A logger for the class if logging is enabled.
     """
 
     def __init__(self, enable_logging: bool = False):
         """
-        Initializes the MultiEmbedding with an empty dictionary of embeddings.
+        Initializes the MultiEmbedding with an empty list of embeddings.
 
         Args:
             enable_logging (bool): If True, logging is enabled. Default is False.
         """
-        self.embeddings = {}
+        self.embeddings = []
         self._current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._logger = None
         if enable_logging:
             self._setup_logging()
-        self._log_info("Initialized MultiEmbedding with an empty dictionary of embeddings.")
+        self._log_info("Initialized MultiEmbedding with an empty list of embeddings.")
         self.labels = None
 
-    def _setup_logging(self, log_dir: str = config.LOG_DIR, log_level: int = logging.INFO, log_format: str = '%(asctime)s - %(levelname)s - %(message)s') -> None:
+    def _setup_logging(self, log_dir: str = conf.LOG_DIRECTORY, log_level: int = logging.INFO, log_format: str = '%(asctime)s - %(levelname)s - %(message)s') -> None:
         """
         Set up logging configuration.
 
@@ -1052,6 +1051,65 @@ class MultiEmbedding:
         self._logger = logging.getLogger(__name__)
         self._log_info("Logging setup complete.")
 
+    def save(self, filename: str) -> None:
+        """
+        Saves the MultiEmbedding instance to a file using pickle.
+
+        Args:
+            filename (str): The file to save the instance to.
+
+        Raises:
+            Exception: If there is an issue with saving the file.
+        """
+        try:
+            with open(filename, 'wb') as file:
+                pickle.dump(self, file)
+                self._log_info(f"Saved MultiEmbedding to {filename}")
+        except Exception as e:
+            if self._logger:
+                self._logger.error("Failed to save MultiEmbedding: %s", e)
+            raise
+    
+    def copy(self) -> 'MultiEmbedding':
+        """
+        Create a deep copy of the MultiEmbedding object.
+        """
+        MultiEmbedding_copy = copy.deepcopy(self)
+        self._log_info("MultiEmbedding copied successfully.")
+        return MultiEmbedding_copy
+
+    def __repr__(self) -> str:
+        """
+        Return a string representation of the MultiEmbedding object.
+        """
+        repr_str = f"MultiEmbedding({len(self.embeddings)} embeddings)"
+        return repr_str
+
+    def __iter__(self):
+        """Allows iteration over embeddings."""
+        return iter(self.embeddings)
+
+    def __len__(self) -> int:
+        """
+        Return the number of embeddings.
+
+        Returns:
+        int: The number of Embedding objects in the MultiEmbedding.
+        """
+        length = len(self.embeddings)
+        self._log_info(f"Number of embeddings: {length}")
+        return length
+
+    def __getitem__(self, index):
+        """
+        Allows indexing and slicing of embeddings.
+        """
+        if isinstance(index, slice):
+            new_multiembedding = MultiEmbedding()
+            new_multiembedding.embeddings = self.embeddings[index]
+            return new_multiembedding
+        return self.embeddings[index]
+
 
     def _log_info(self, message: str) -> None:
         """
@@ -1063,7 +1121,7 @@ class MultiEmbedding:
         if self._logger:
             self._logger.info(message)
 
-    def add_embedding(self, name: str, embedding: 'Embedding') -> None:
+    def add_embedding(self, embedding: 'Embedding') -> None:
         """
         Adds an embedding to the collection with a specified name.
 
@@ -1071,8 +1129,8 @@ class MultiEmbedding:
             name (str): The label associated with the embedding.
             embedding (Embedding): The embedding instance to be added.
         """
-        self.embeddings[name] = embedding
-        self._log_info(f"Added embedding with name '{name}'.")
+        self.embeddings.append(embedding)
+        self._log_info(f"Added embedding'.")
 
 
     def align(self, func = torch.nanmean, mode = 'accurate') -> None:
@@ -1085,9 +1143,9 @@ class MultiEmbedding:
             self._log_info("No embeddings to align.")
             return
 
-        dimensions = {int(embedding.dimension) for embedding in self.embeddings.values()}
-        curvatures = {embedding.curvature.item() for embedding in self.embeddings.values()}
-        geometries = {embedding.geometry for embedding in self.embeddings.values()}
+        dimensions = {int(embedding.dimension) for embedding in self.embeddings}
+        curvatures = {embedding.curvature.item() for embedding in self.embeddings}
+        geometries = {embedding.geometry for embedding in self.embeddings}
 
         if len(curvatures) != 1 or len(geometries) != 1:
             raise ValueError("All embeddings must have the same curvature and geometry.")
@@ -1098,7 +1156,7 @@ class MultiEmbedding:
 
         reference_embedding = self.reference_embedding(func=func)
 
-        for name, embedding in self.embeddings.items():
+        for name, embedding in enumerate(self.embeddings):
             hp = procrustes.HyperbolicProcrustes(embedding, reference_embedding,mode = mode, enable_logging = self._logger is not None )
             self.embeddings[name] = hp.map(embedding)
             # Add Procrustes alignment or other alignment logic if needed.
@@ -1117,13 +1175,13 @@ class MultiEmbedding:
         """
         # Get all unique labels across embeddings
 
-        all_labels = sorted({label for embedding in self.embeddings.values() for label in embedding.labels})
+        all_labels = sorted({label for embedding in self.embeddings for label in embedding.labels})
 
         self._labels = all_labels
         n = len(all_labels)
         
         data_type = None
-        for embedding in self.embeddings.values():
+        for embedding in self.embeddings:
             if data_type is None:
                 data_type = embedding._points.dtype
                 break
@@ -1133,7 +1191,7 @@ class MultiEmbedding:
         stacked_counts = torch.zeros((len(self.embeddings), n, n), dtype=data_type)
         
         cnt = 0
-        for _, embedding in self.embeddings.items():
+        for embedding in self.embeddings:
             idx = torch.tensor(  [all_labels.index(label) for label in embedding.labels] )
             distance_matrix = torch.full((n, n), float('nan'),  dtype=data_type)
             distance_matrix[idx[:, None], idx] = embedding.distance_matrix()
@@ -1192,9 +1250,9 @@ class MultiEmbedding:
         - RuntimeError: For any errors during the embedding process.
         """
         # Ensure all embeddings have the same curvature and geometry
-        curvatures = {embedding.curvature.item() for embedding in self.embeddings.values()}
-        geometries = {embedding.geometry for embedding in self.embeddings.values()}
-        dimensions = {int(embedding.dimension) for embedding in self.embeddings.values()}
+        curvatures = {embedding.curvature.item() for embedding in self.embeddings}
+        geometries = {embedding.geometry for embedding in self.embeddings}
+        dimensions = {int(embedding.dimension) for embedding in self.embeddings}
 
         if (len(curvatures) != 1) or (len(geometries) != 1) or (len(dimensions) != 1):
             raise ValueError("All embeddings must have the same curvature, geometry, and dimension.")
@@ -1205,11 +1263,11 @@ class MultiEmbedding:
 
         
         # Retrieve and validate keyword arguments
-        accurate = kwargs.get('accurate', config.ACCURATE)
-        total_epochs = kwargs.get('total_epochs', config.TOTAL_EPOCHS)
-        initial_lr = kwargs.get('initial_lr', config.LEARNING_RATE_INIT)
-        max_diameter = kwargs.get('max_diameter', config.MAX_DIAM)
-        enable_save = kwargs.get('enable_save', config.ENABLE_SAVE)
+        accurate = kwargs.get('accurate', conf.ENABLE_ACCURATE_OPTIMIZATION)
+        total_epochs = kwargs.get('total_epochs', conf.TOTAL_EPOCHS)
+        initial_lr = kwargs.get('initial_lr', conf.INITIAL_LEARNING_RATE)
+        max_diameter = kwargs.get('max_diameter', conf.MAX_RANGE)
+        enable_save = kwargs.get('enable_save', conf.ENABLE_SAVE_MODE)
         learning_rate = kwargs.get('learning_rate', None)
         weight_exponent = kwargs.get('weight_exponent', None)
 
@@ -1319,20 +1377,3 @@ class MultiEmbedding:
 
         return embeddings
 
-    def __repr__(self) -> str:
-        """
-        Return a string representation of the MultiEmbedding object.
-        """
-        repr_str = f"MultiEmbedding({len(self.embeddings)} embeddings)"
-        return repr_str
-
-    def __len__(self) -> int:
-        """
-        Return the number of embeddings.
-
-        Returns:
-        int: The number of Tree objects in the MultiEmbedding.
-        """
-        length = len(self.embeddings)
-        self._log_info(f"Number of embeddings: {length}")
-        return length
