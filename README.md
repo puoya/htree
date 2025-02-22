@@ -587,7 +587,7 @@ The `rotate` method allows you to rotate the points in Euclidean space by applyi
 
 
 <!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/euclidean_rotation.png" alt="GitHub Logo" width="500"/> -->
-![GitHub Logo](https://imgur.com/AuqzTjR)
+![GitHub Logo](https://i.imgur.com/AuqzTjR.png)
 
 ## `center`,`centroid`, and `distance_matrix`  Methods
 The `center` method centers the points in Euclidean space by subtracting the `centroid` from each point. This operation shifts the points so that their `centroid` becomes the origin. The `centroid` method computes the geometric center of the points in Euclidean space by calculating the mean of each dimension.
