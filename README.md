@@ -558,7 +558,7 @@ In this example, a regular pentagon is translated by a randomly generated 2D vec
 
 
 <!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/euclidean_translation.png" alt="GitHub Logo" width="500"/> -->
-![GitHub Logo](images/euclidean_translation.png)
+![GitHub Logo](https://i.imgur.com/5bOyyEA.png)
 
 This demonstrates the effect of the `translate` method on the pentagon's vertices, illustrating how the points move to their new positions.
 
