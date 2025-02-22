@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "htree"
-version = "2.3.1"  
+version = "2.3.2"  
 description = "A library for tree reading, embedding, and analysis of phylogenetic trees"
 authors = [
     { name = "Puoya Tabaghi", email = "ptabaghi@ucsd.edu" }

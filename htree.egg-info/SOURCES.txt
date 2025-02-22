@@ -16,11 +16,3 @@ htree.egg-info/SOURCES.txt
 htree.egg-info/dependency_links.txt
 htree.egg-info/requires.txt
 htree.egg-info/top_level.txt
-images/euclidean_rotation.png
-images/euclidean_translation.png
-images/hyperbolic_procrustes_random.png
-images/loid_rotation.png
-images/loid_translate.png
-images/noisy_euclidean_procrustes.png
-images/poincare_translation.png
-images/rotation_poincare.png
