@@ -803,7 +803,7 @@ tensor([[ 0.2500],
 
 
 <!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/poincare_translation.png" alt="GitHub Logo" width="1000"/> -->
-![GitHub Logo](images/poincare_translation.png)
+![GitHub Logo](https://i.imgur.com/Q7FVghl.png)
 
 ```python
 >>> fig, axs = plt.subplots(1, 2, figsize=(14, 7))
@@ -838,7 +838,7 @@ tensor([[ 0.2500],
 ```
 
 <!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/rotation_poincare.png" alt="GitHub Logo" width="1000"/> -->
-![GitHub Logo](images/rotation_poincare.png)
+![GitHub Logo](https://i.imgur.com/fv4SUk0.png)
 
 # LoidEmbedding Class
 
@@ -1022,7 +1022,7 @@ tensor([[ 1.0000e+00],
 ```
 
 <!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/loid_translate.png" alt="GitHub Logo" width="500"/> -->
-![GitHub Logo](images/loid_translate.png)
+![GitHub Logo](https://i.imgur.com/odKS4oy.png)
 
 ```python
 >>> theta = np.radians(30)
@@ -1039,7 +1039,7 @@ tensor([[ 1.0000e+00],
 
 
 <!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/loid_rotation.png" alt="GitHub Logo" width="500"/> -->
-![GitHub Logo](images/loid_rotation.png)
+![GitHub Logo](https://i.imgur.com/dlZ7WoD.png)
 
 # `EuclideanProcrustes` Class
 The `EuclideanProcrustes` class performs Euclidean orthogonal Procrustes analysis, which is a method used to align one embedding (source) to another embedding (target) by finding the best-fitting orthogonal transformation (rotation and translation). This process minimizes the alignment error between the two embeddings, making them as similar as possible in Euclidean space.
@@ -1137,7 +1137,7 @@ This plot demonstrates how the alignment error increases as more noise is added 
 
 
 <!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/noisy_euclidean_procrustes.png" alt="GitHub Logo" width="500"/> -->
-![GitHub Logo](images/noisy_euclidean_procrustes.png)
+![GitHub Logo](https://i.imgur.com/u7LEBdf.png)
 
 # `HyperbolicProcrustes` Class
 
@@ -1255,7 +1255,7 @@ This plot demonstrates how the alignment error increases as more noise is added 
 
 
 <!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/hyperbolic_procrustes_random.png" alt="GitHub Logo" width="500"/> -->
-![GitHub Logo](images/hyperbolic_procrustes_random.png)
+![GitHub Logo](https://i.imgur.com/9x4kPIG.png)
 
 
 
