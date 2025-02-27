@@ -1309,7 +1309,7 @@ EuclideanEmbedding(points_shape=[2, 10])
 >>> embedding2 = EuclideanEmbedding(points = points, labels = labels)
 >>> print(embedding2)
 EuclideanEmbedding(points_shape=[4, 14])
->>> multi_embedding.add_embedding('b',embedding2)
+>>> multi_embedding.add_embedding(embedding2)
 >>> labels = [str(i) for i in range(5)]
 >>> points = np.random.randn(3,5)/10
 >>> embedding3 = EuclideanEmbedding(points = points, labels = labels)
