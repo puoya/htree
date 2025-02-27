@@ -7,11 +7,12 @@
    - Clean the `dist` directory:
      ```bash
      rm -rf dist/*
+     rm -rf htree.egg-info
      ```
    - Build the package:
      ```bash
-     pip install build 
-     python -m build
+     # pip install build 
+     # python -m build
      python setup.py sdist bdist_wheel
      ```
 
