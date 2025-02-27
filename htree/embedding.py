@@ -165,8 +165,17 @@ class Embedding:
     def _validate_norms(self) -> None:
         """Validates that all points are within the norm constraints for the embedding."""
         raise NotImplementedError("_validate_norms must be implemented by a subclass")
-    
 
+    def distance_matrix(self) -> torch.Tensor:
+        """
+        Computes the distance matrix for points in the embedding space.
+
+        Raises:
+            NotImplementedError: This method must be implemented by a subclass.
+        """
+        raise NotImplementedError("distance_matrix must be implemented by a subclass")
+
+    
     def save(self, filename: str) -> None:
         """
         Saves the Embedding instance to a file using pickle.
@@ -185,16 +194,6 @@ class Embedding:
             if self._logger:
                 self._logger.error("Failed to save Embedding: %s", e)
             raise
-    
-    def copy(self) -> 'Embedding':
-        """
-        Create a deep copy of the Embedding object.
-        """
-        
-        Embedding_copy = copy.deepcopy(self)
-        self._log_info(f"Embedding copied successfully.")
-        return Embedding_copy
-
     
     @staticmethod
     def load(filename: str) -> 'Embedding':
@@ -219,6 +218,15 @@ class Embedding:
         except Exception as e:
             logging.error("Failed to load Embedding: %s", e)
             raise
+
+    def copy(self) -> 'Embedding':
+        """
+        Create a deep copy of the Embedding object.
+        """
+        
+        Embedding_copy = copy.deepcopy(self)
+        self._log_info(f"Embedding copied successfully.")
+        return Embedding_copy
 
     def __repr__(self) -> str:
         """Returns a string representation of the Embedding."""
@@ -1070,6 +1078,30 @@ class MultiEmbedding:
                 self._logger.error("Failed to save MultiEmbedding: %s", e)
             raise
     
+    @staticmethod
+    def load(filename: str) -> 'MultiEmbedding':
+        """
+        Loads a MultiEmbedding instance from a file using pickle.
+
+        Args:
+            filename (str): The file to load the instance from.
+
+        Returns:
+            MultiEmbedding: The loaded MultiEmbedding instance.
+
+        Raises:
+            Exception: If there is an issue with loading the file.
+        """
+        try:
+            with open(filename, 'rb') as file:
+                instance = pickle.load(file)
+            if hasattr(instance, '_logger') and instance._logger:
+                instance._log_info(f"Loaded MultiEmbedding from {filename}")
+            return instance
+        except Exception as e:
+            logging.error("Failed to load MultiEmbedding: %s", e)
+            raise
+
     def copy(self) -> 'MultiEmbedding':
         """
         Create a deep copy of the MultiEmbedding object.
