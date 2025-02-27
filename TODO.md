@@ -10,7 +10,9 @@
      ```
    - Build the package:
      ```bash
+     pip install build 
      python -m build
+     python setup.py sdist bdist_wheel
      ```
 
 3. **Get Token from PyPI:**

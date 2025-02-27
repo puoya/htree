@@ -1,24 +1,36 @@
 Metadata-Version: 2.2
 Name: htree
-Version: 2.3.2
+Version: 2.3.6
 Summary: A library for tree reading, embedding, and analysis of phylogenetic trees
-Author-email: Puoya Tabaghi <ptabaghi@ucsd.edu>
+Author: Puoya Tabaghi
+Author-email: ptabaghi@ucsd.edu
 License: MIT
-Project-URL: Homepage, https://puoya.github.io/codes/hypertree.html
-Project-URL: Repository, https://github.com/puoya/HyperTree
-Requires-Python: >=3.6
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Requires-Python: >=3.10.16
 Description-Content-Type: text/markdown
 License-File: LICENSE
-Requires-Dist: numpy>=1.22.4
-Requires-Dist: scipy>=1.7.1
-Requires-Dist: matplotlib>=3.4.3
-Requires-Dist: scikit-learn>=0.24.2
-Requires-Dist: seaborn>=0.11.2
-Requires-Dist: torch>=1.10.0
-Requires-Dist: treeswift>=1.0.0
-Requires-Dist: tqdm>=4.60.0
-Requires-Dist: imageio>=2.9.0
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: matplotlib
+Requires-Dist: scikit-learn
+Requires-Dist: seaborn
+Requires-Dist: torch
+Requires-Dist: treeswift
+Requires-Dist: tqdm
+Requires-Dist: imageio
 Requires-Dist: imageio-ffmpeg
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: license
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
 
 
 # Phylogenetic Tree Embedding
@@ -36,16 +48,16 @@ To use `htree`, ensure your system meets the following requirements:
 ### 📦 Dependencies
 `htree` relies on the following Python libraries:
 
-- `numpy>=1.22.4` – Numerical operations  
-- `scipy>=1.7.1` – Scientific computing  
-- `matplotlib>=3.4.3` – Visualization  
-- `scikit-learn>=0.24.2` – Machine learning utilities  
-- `seaborn>=0.11.2` – Statistical data visualization  
-- `torch>=1.10.0` – PyTorch for embedding optimization  
-- `treeswift>=1.0.0` – Phylogenetic tree processing  
-- `tqdm>=4.60.0` – Progress bar for operations  
-- `imageio>=2.9.0` – Image processing  
-- `imageio-ffmpeg` – Video processing for animations  
+- `numpy>=2.2.3` – Numerical operations  
+- `scipy>=1.15.2` – Scientific computing  
+- `matplotlib>=3.10.0` – Visualization  
+- `scikit-learn>=1.6.1` – Machine learning utilities  
+- `seaborn>=0.13.2` – Statistical data visualization  
+- `torch>=2.6.0` – PyTorch for embedding optimization  
+- `treeswift>=1.1.45` – Phylogenetic tree processing  
+- `tqdm>=4.67.1` – Progress bar for operations  
+- `imageio>=2.37.0` – Image processing  
+- `imageio-ffmpeg >= 0.6.0` – Video processing for animations  
 
 These dependencies **will be installed automatically** when you install `htree` via `pip`:
 

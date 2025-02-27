@@ -1,7 +1,7 @@
 LICENSE
 MANIFEST.in
 README.md
-pyproject.toml
+setup.py
 htree/PCA.py
 htree/__init__.py
 htree/conf.py
