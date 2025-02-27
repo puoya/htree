@@ -14,16 +14,16 @@ To use `htree`, ensure your system meets the following requirements:
 ### 📦 Dependencies
 `htree` relies on the following Python libraries:
 
-- `numpy>=2.2.3` – Numerical operations  
-- `scipy>=1.15.2` – Scientific computing  
-- `matplotlib>=3.10.0` – Visualization  
-- `scikit-learn>=1.6.1` – Machine learning utilities  
-- `seaborn>=0.13.2` – Statistical data visualization  
-- `torch>=2.6.0` – PyTorch for embedding optimization  
-- `treeswift>=1.1.45` – Phylogenetic tree processing  
-- `tqdm>=4.67.1` – Progress bar for operations  
-- `imageio>=2.37.0` – Image processing  
-- `imageio-ffmpeg >= 0.6.0` – Video processing for animations  
+- `numpy` – Numerical operations  
+- `scipy` – Scientific computing  
+- `matplotlib` – Visualization  
+- `scikit-learn` – Machine learning utilities  
+- `seaborn` – Statistical data visualization  
+- `torch` – PyTorch for embedding optimization  
+- `treeswift` – Phylogenetic tree processing  
+- `tqdm` – Progress bar for operations  
+- `imageio` – Image processing  
+- `imageio-ffmpeg` – Video processing for animations  
 
 These dependencies **will be installed automatically** when you install `htree` via `pip`:
 
