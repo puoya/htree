@@ -7,11 +7,15 @@ import logging
 import imageio
 import numpy as np
 import treeswift as ts
-import seaborn as sns
 import matplotlib.patches as patches
 from datetime import datetime
 import matplotlib.pyplot as plt
 from . import conf, utils, embedding
+
+# import searborn as sns
+# import conf
+# import utils
+# import embedding
 
 from collections.abc import Collection
 from typing import Union, Set, Optional, List, Callable, Tuple, Dict, Iterator
@@ -458,17 +462,43 @@ class Tree:
             ax1 = fig.add_subplot(gs[2:, 0])
             ax2 = fig.add_subplot(gs[2:, 1])
 
-            sns.heatmap(log10_re_matrix, mask=mask, ax=ax1, cmap='viridis', cbar_kws={'label': 'log10(RE)'}, vmin=min_heatplot, vmax=max_heatplot, square=True, xticklabels=False, yticklabels=False)
-            ax1.set_title(f'Relative Error (RE) Matrix (Epoch {epoch})')
-            cbar = ax1.collections[0].colorbar
-            cbar.set_ticks(cbar.get_ticks())
-            cbar.set_ticklabels([f'{tick:.2f}' for tick in cbar.get_ticks()])
+            # sns.heatmap(log10_re_matrix, mask=mask, ax=ax1, cmap='viridis', cbar_kws={'label': 'log10(RE)'}, vmin=min_heatplot, vmax=max_heatplot, square=True, xticklabels=False, yticklabels=False)
+            # ax1.set_title(f'Relative Error (RE) Matrix (Epoch {epoch})')
+            # cbar = ax1.collections[0].colorbar
+            # cbar.set_ticks(cbar.get_ticks())
+            # cbar.set_ticklabels([f'{tick:.2f}' for tick in cbar.get_ticks()])
 
-            sns.heatmap(log10_distance_matrix, mask=mask, ax=ax2, cmap='viridis', cbar_kws={'label': 'log10(Distance)'}, square=True, xticklabels=False, yticklabels=False)
+
+            log10_re_matrix_masked = np.where(mask, np.nan, log10_re_matrix)
+            log10_distance_matrix_masked = np.where(mask, np.nan, log10_distance_matrix)
+
+            im1 = ax1.imshow(log10_re_matrix_masked, cmap='viridis', vmin=min_heatplot, vmax=max_heatplot)
+            ax1.set_title(f'Relative Error (RE) Matrix (Epoch {epoch})')
+            # Add colorbar
+            cbar1 = fig.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04)
+            cbar1.set_label('log10(RE)')
+            cbar1.set_ticks(cbar1.get_ticks())
+            cbar1.set_ticklabels([f'{tick:.2f}' for tick in cbar1.get_ticks()])
+
+            # Plot second heatmap (Distance Matrix)
+            im2 = ax2.imshow(log10_distance_matrix_masked, cmap='viridis')
             ax2.set_title('Distance Matrix')
-            cbar = ax2.collections[0].colorbar
-            cbar.set_ticks(cbar.get_ticks())
-            cbar.set_ticklabels([f'{tick:.2f}' for tick in cbar.get_ticks()])
+
+            # Add colorbar
+            cbar2 = fig.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04)
+            cbar2.set_label('log10(Distance)')
+            cbar2.set_ticks(cbar2.get_ticks())
+            cbar2.set_ticklabels([f'{tick:.2f}' for tick in cbar2.get_ticks()])
+
+            # sns.heatmap(log10_distance_matrix, mask=mask, ax=ax2, cmap='viridis', cbar_kws={'label': 'log10(Distance)'}, square=True, xticklabels=False, yticklabels=False)
+            # ax2.set_title('Distance Matrix')
+            # cbar = ax2.collections[0].colorbar
+            # cbar.set_ticks(cbar.get_ticks())
+            # cbar.set_ticklabels([f'{tick:.2f}' for tick in cbar.get_ticks()])
+            # Hide x and y ticks for heatmaps
+            for ax in (ax1, ax2):
+                ax.set_xticks([])
+                ax.set_yticks([])
 
             # Add thin black frame around heatmaps
             for ax in [ax1, ax2]:
