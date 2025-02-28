@@ -18,7 +18,6 @@ To use `htree`, ensure your system meets the following requirements:
 - `scipy` – Scientific computing  
 - `matplotlib` – Visualization  
 - `scikit-learn` – Machine learning utilities  
-- `seaborn` – Statistical data visualization  
 - `torch` – PyTorch for embedding optimization  
 - `treeswift` – Phylogenetic tree processing  
 - `tqdm` – Progress bar for operations  
