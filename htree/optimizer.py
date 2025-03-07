@@ -1,10 +1,25 @@
 import torch
-from .utils import hyperbolic_exponential  # Exponential map from tangent space to hyperbolic space
-from .embedding import  LoidEmbedding
+from .utils import hyperbolic_exp  # Exponential map from tangent space to hyperbolic space
+from .embedding import LoidEmbedding
 
 class HyperbolicOptimizer:
+    """
+    A class to perform optimization in hyperbolic space.
+
+    Attributes:
+        function (callable): The function to optimize. Takes a single (D+1, N) tensor.
+        D (int): Dimension of the tangent space (D+1 in hyperbolic space).
+        N (int): Number of points.
+        learning_rate (float): Learning rate for optimization.
+        optimizer (torch.optim.Optimizer or None): Optional optimizer, default Adam.
+        max_grad_norm (float): Max gradient norm for gradient clipping.
+        lr_decay_factor (float): Factor by which the learning rate decays after each epoch.
+    """
+    
     def __init__(self, function, D, N, optimizer=None, learning_rate=0.01, max_grad_norm=1.0, lr_decay_factor=0.99):
         """
+        Initialize the HyperbolicOptimizer.
+
         Args:
             function (callable): The function to optimize. Takes a single (D+1, N) tensor.
             D (int): Dimension of the tangent space (D+1 in hyperbolic space).
@@ -45,7 +60,7 @@ class HyperbolicOptimizer:
             with torch.no_grad():
                 variables.data = torch.clamp(variables.data, min=-5.0, max=5.0)  # Clamping to avoid extreme values
 
-            hyperbolic_points = hyperbolic_exponential(variables)  # Convert (D, N) to (D+1, N)
+            hyperbolic_points = hyperbolic_exp(variables)  # Convert (D, N) to (D+1, N)
             
             # Evaluate function
             loss = self.function(hyperbolic_points)  
@@ -63,4 +78,4 @@ class HyperbolicOptimizer:
             print(f"Epoch {epoch}: Loss = {loss.item()}")
 
             
-        return LoidEmbedding(points = hyperbolic_exponential(variables).detach(), curvature = -1)  # Return optimized points in hyperbolic space
+        return LoidEmbedding(points=hyperbolic_exp(variables).detach(), curvature=-1)  # Return optimized points in hyperbolic space

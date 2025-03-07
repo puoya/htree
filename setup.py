@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="htree",
-    version="2.3.9",  # Adjust your version accordingly
+    version="3.0.0",  # Adjust your version accordingly
     description="A library for tree reading, embedding, and analysis of phylogenetic trees",
     author="Puoya Tabaghi",
     author_email="ptabaghi@ucsd.edu",
@@ -13,7 +13,6 @@ setup(
         "scipy",
         "matplotlib",
         "scikit-learn",
-        "seaborn",
         "torch",
         "treeswift",
         "tqdm",

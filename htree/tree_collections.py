@@ -1,200 +1,339 @@
 import os
-import gc
 import copy
-import torch
 import pickle
 import logging
-import imageio
-import numpy as np
-import treeswift as ts
-import matplotlib.patches as patches
+import random
 from datetime import datetime
-import matplotlib.pyplot as plt
-from . import conf, utils, embedding
-
-# import searborn as sns
-# import conf
-# import utils
-# import embedding
-
 from collections.abc import Collection
 from typing import Union, Set, Optional, List, Callable, Tuple, Dict, Iterator
 
+import torch
+import numpy as np
+import treeswift as ts
+import matplotlib.pyplot as plt
+from matplotlib import patches
+from matplotlib.gridspec import GridSpec
+import matplotlib.animation as animation
+import scipy.sparse.linalg as spla
+from torch.optim import Adam
+from tqdm import tqdm
+
+# import conf
+# import utils
+# import embedding
+# from logger import get_logger, logging_enabled, get_time
+from . import conf, utils, embedding
+from .logger import get_logger, logging_enabled, get_time
+
+# Use non-GUI backend for matplotlib
+import matplotlib
+matplotlib.use('Agg')
 #############################################################################################
 # Class for handling tree operations using treeswift and additional utilities.
 #############################################################################################
 class Tree:
-    def __init__(self, *args: Tuple[str, Optional[ts.Tree]], enable_logging: bool = False):
-        """
-        Initialize a Tree object.
-        
-        Parameters:
-            args (Tuple[str, Optional[ts.Tree]]): 
-                Variable length arguments:
-                - Single argument: File path (str) to load the tree.
-                - Two arguments: Name (str) and treeswift.Tree object.
-            enable_logging (bool): Enable logging if True.
-        """
-        self._logger = None
-        self._current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        if enable_logging:
-            self._setup_logging()
+    """
+    Represents a tree structure with logging capabilities.
+
+    This class provides methods to manipulate and analyze tree structures,
+    including embedding, normalizing, copying, saving, and computing distances.
+
+    Methods:
+    --------
+    __init__(self, *args, **kwargs)
+        Initializes the Tree object from a file or a (name, treeswift.Tree) pair.
+
+    update_time(self)
+        Sets _current_time to the current time.
+
+    copy(self) -> 'Tree'
+        Creates a deep copy of the Tree object.
+
+    save(self, file_path: str, format: str = 'newick') -> None
+        Saves the tree to a file in the specified format.
+
+    terminal_names(self) -> List[str]
+        Retrieves terminal (leaf) names in the tree.
+
+    distance_matrix(self) -> torch.Tensor
+        Computes the pairwise distance matrix for the tree.
+
+    diameter(self) -> torch.Tensor
+        Calculates and logs the diameter of the tree.
+
+    normalize(self) -> None
+        Normalizes tree branch lengths such that the tree's diameter is 1.
+
+    embed(self, dimension: int, geometry: str = 'hyperbolic', **kwargs) -> 'Embedding'
+        Embeds the tree into a specified geometric space (hyperbolic or Euclidean).
+
+    Attributes:
+    -----------
+    _current_time : datetime
+        The current time for logging and saving purposes.
+    name : str
+        The name of the tree.
+    contents : treeswift.Tree
+        The contents of the tree.
+    """
+    def __init__(self, *args, **kwargs):
+        self._current_time = get_time() or datetime.now()
 
         if len(args) == 1 and isinstance(args[0], str):
-            self.name = os.path.basename(args[0])
-            self.contents = self._load_tree(args[0])
+            self.name, self.contents = os.path.basename(args[0]), self._load_tree(args[0])
             self._log_info(f"Initialized tree from file: {args[0]}")
         elif len(args) == 2 and isinstance(args[0], str) and isinstance(args[1], ts.Tree):
-            self.name = args[0]
-            self.contents = args[1]
+            self.name, self.contents = args
             self._log_info(f"Initialized tree with name: {self.name}")
         else:
-            raise ValueError("Expected a single file path or a name and treeswift.Tree object.")
-
-    def _setup_logging(self, log_dir: str = conf.LOG_DIRECTORY, log_level: int = logging.INFO, 
-                       log_format: str = '%(asctime)s - %(levelname)s - %(message)s') -> None:
-        """
-        Configure logging.
-
-        Parameters:
-            log_dir (str): Directory for log files.
-            log_level (int): Logging level.
-            log_format (str): Format for log messages.
-        """
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"Tree_{self._current_time}.log")
-        logging.basicConfig(filename=log_file, level=log_level, format=log_format)
-        self._logger = logging.getLogger(__name__)
-        self._log_info("Logging initialized.")
-
-    def _log_info(self, message: str) -> None:
-        """
-        Log an informational message if logging is enabled.
-
-        Parameters:
-            message (str): The message to log.
-        """
-        if self._logger:
-            self._logger.info(message)
-
+            raise ValueError("Expected a file path or a (name, treeswift.Tree) pair.")
+    ################################################################################################
+    def _log_info(self, message: str):
+        """Logs a message if global logging is enabled."""
+        if logging_enabled(): get_logger().info(message) 
+    ################################################################################################
     @classmethod
-    def _from_contents(cls, name: str, contents: ts.Tree, enable_logging: bool = False) -> 'Tree':
+    def _from_contents(cls, name: str, contents: ts.Tree) -> 'Tree':
+        """Creates a Tree instance from a treeswift.Tree object."""
+        instance = cls(name, contents)
+        instance._log_info(f"Tree created: {name}")
+        return instance
+    ################################################################################################
+    def _load_tree(self, file_path: str) -> ts.Tree:
+        """Loads a treeswift.Tree from a Newick file."""
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+        self._log_info(f"Loading tree from: {file_path}")
+        return ts.read_tree_newick(file_path)
+    ################################################################################################
+    def __repr__(self) -> str:
+        """Returns the string representation of the Tree object."""
+        return f"Tree({self.name})"
+    ################################################################################################
+    def update_time(self):
         """
-        Create a Tree object from a treeswift.Tree object.
+        Sets _current_time to the current time.
+
+        This method updates the _current_time attribute to the current system time.
 
         Parameters:
-            name (str): Name of the tree.
-            contents (ts.Tree): treeswift.Tree object.
-            enable_logging (bool): Enable logging if True.
+        -----------
+        None
 
         Returns:
-            Tree: A new Tree instance.
-        """
-        instance = cls(name, contents, enable_logging=enable_logging)
-        instance._log_info(f"Tree created from contents with name: {name}")
-        return instance
+        --------
+        None
 
+        Notes:
+        ------
+        - The function sets the _current_time attribute to the result of datetime.now().
+        - Logs are generated to indicate that the current time has been updated.
+
+        Examples:
+        ---------
+        To update the current time:
+        >>> instance.update_time()
+        """
+        self._current_time = datetime.now()
+        self._log_info("Current time updated to now.")
+    ################################################################################################
     def copy(self) -> 'Tree':
         """
-        Create a deep copy of the Tree object.
+        Creates a deep copy of the Tree object.
+
+        This method generates a deep copy of the current Tree object, including all its attributes and contents.
+
+        Parameters:
+        -----------
+        None
 
         Returns:
-            Tree: A deep copy of the current Tree instance.
+        --------
+        Tree
+            A deep copy of the current Tree object.
+
+        Notes:
+        ------
+        - The function uses the `copy.deepcopy` method to ensure all nested objects are copied.
+        - Logs are generated to indicate the successful creation of the tree copy.
+
+        Examples:
+        ---------
+        To create a deep copy of the tree:
+        >>> tree_copy = instance.copy()
         """
         tree_copy = copy.deepcopy(self)
         self._log_info(f"Copied tree: {self.name}")
         return tree_copy
-
-    def _load_tree(self, file_path: str) -> ts.Tree:
-        """
-        Load a tree from a Newick file.
-
-        Parameters:
-            file_path (str): Path to the Newick file.
-
-        Returns:
-            ts.Tree: The loaded treeswift.Tree object.
-
-        Raises:
-            FileNotFoundError: If the file does not exist.
-        """
-        self._log_info(f"Loading tree from: {file_path}")
-        
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"File not found: {file_path}")
-        
-        return ts.read_tree_newick(file_path)
-
+    ################################################################################################
     def save(self, file_path: str, format: str = 'newick') -> None:
         """
-        Save the tree to a file in the specified format.
+        Saves the tree to a file in the specified format.
+
+        This method saves the tree structure to a file using the specified format.
 
         Parameters:
-            file_path (str): Destination file path.
-            format (str): File format ('newick' supported).
-
-        Raises:
-            ValueError: If the specified format is unsupported.
-        """
-        try:
-            if format.lower() == 'newick':
-                self.contents.write_tree_newick(file_path)
-                self._log_info(f"Tree saved: {self.name}")
-            else:
-                raise ValueError(f"Unsupported format: {format}")
-        except Exception as e:
-            self._log_info(f"Failed to save tree: {self.name}. Error: {e}")
-            raise
-
-    def terminal_names(self) -> List[str]:
-        """
-        Retrieve terminal (leaf) names in the tree.
+        -----------
+        file_path : str
+            The path where the tree file will be saved.
+        format : str, optional
+            The format in which to save the tree ('newick' is supported). Default is 'newick'.
 
         Returns:
-            List[str]: List of terminal names.
+        --------
+        None
+
+        Raises:
+        -------
+        ValueError
+            If an unsupported format is specified.
+
+        Notes:
+        ------
+        - The function currently supports saving the tree in the Newick format only.
+        - Logs are generated to indicate the success or failure of the save operation.
+
+        Examples:
+        ---------
+        To save the tree in Newick format:
+        >>> instance.save('path/to/tree_file.newick')
+        """
+        """Saves the tree to a file in the specified format."""
+        if format.lower() == 'newick':
+            self.contents.write_tree_newick(file_path)
+            self._log_info(f"Tree saved: {self.name}")
+        else:
+            self._log_info(f"Failed to save tree: {self.name}. Unsupported format: {format}")
+            raise ValueError(f"Unsupported format: {format}")
+    ################################################################################################
+    def terminal_names(self) -> List[str]:
+        """
+        Retrieves terminal (leaf) names in the tree.
+
+        This method returns a list of the names of all terminal (leaf) nodes in the tree.
+
+        Parameters:
+        -----------
+        None
+
+        Returns:
+        --------
+        List[str]
+            A list of terminal (leaf) node names in the tree.
+
+        Notes:
+        ------
+        - The function logs the retrieval of terminal names for reference.
+        - Terminal names are obtained by traversing the tree and collecting labels of leaves.
+
+        Examples:
+        ---------
+        To retrieve the terminal names:
+        >>> leaf_names = instance.terminal_names()
         """
         leaf_names = list(self.contents.labels(leaves=True, internal=False))
         self._log_info(f"Retrieved terminal names for tree: {self.name}")
         return leaf_names
-
+    ################################################################################################
     def distance_matrix(self) -> torch.Tensor:
         """
-        Compute the distance matrix for the tree.
+        Computes the pairwise distance matrix for the tree.
+
+        This method calculates the pairwise distances between all terminal nodes in the tree
+        and returns the distance matrix as a PyTorch tensor along with the terminal names.
+
+        Parameters:
+        -----------
+        None
 
         Returns:
-            torch.Tensor: Distance matrix with terminal names as labels.
-        """
-        labels = self.terminal_names()
-        n = len(labels)
-        dist_matrix = torch.zeros((n, n))
-        dist_dict = self.contents.distance_matrix(leaf_labels=True)
-        label_to_idx = {label: idx for idx, label in enumerate(labels)}
-        for label1, row in dist_dict.items():
-            i = label_to_idx[label1]
-            for label2, dist in row.items():
-                j = label_to_idx[label2]
-                dist_matrix[i, j] = torch.tensor(dist)
-        self._log_info(f"Computed distance matrix for tree: {self.name}")
-        return dist_matrix
+        --------
+        torch.Tensor
+            A tensor representing the pairwise distance matrix of the tree.
+        list
+            A list of terminal node names corresponding to the distance matrix.
 
+        Notes:
+        ------
+        - The function creates a mapping of terminal names to indices and extracts the distance data
+          into numpy arrays for efficient processing.
+        - The computed distances are converted into a PyTorch tensor and reshaped accordingly.
+        - Logs are generated to indicate the computation status and the number of terminals.
+
+        Examples:
+        ---------
+        To compute the distance matrix:
+        >>> distance_matrix, terminal_names = instance.distance_matrix()
+        """
+        terminal_names = self.terminal_names()
+        n = len(terminal_names)
+        # Create a mapping of terminal names to indices
+        index_map = np.array([self.contents.distance_matrix(leaf_labels=True).get(name, {}) for name in terminal_names])
+        # Extract data into numpy arrays for efficient processing
+        row_labels = np.repeat(np.arange(n), n)
+        col_labels = np.tile(np.arange(n), n)
+        distances = np.array([index_map[i].get(terminal_names[j], 0) for i, j in zip(row_labels, col_labels)])
+        # Convert directly to a PyTorch tensor
+        distances = torch.tensor(distances, dtype=torch.float32).reshape(n, n)
+        self._log_info(f"Distance matrix computed for tree '{self.name}' with {n} terminals.")
+        return (distances,terminal_names)
+    ################################################################################################
     def diameter(self) -> torch.Tensor:
         """
-        Calculate the diameter of the tree.
+        Calculate and log the diameter of the tree.
+
+        This method computes the diameter of the tree and logs the value.
+
+        Parameters:
+        -----------
+        None
 
         Returns:
-            torch.Tensor: Diameter of the tree.
+        --------
+        torch.Tensor
+            A tensor representing the diameter of the tree.
+
+        Notes:
+        ------
+        - The diameter is computed using the tree's contents and logged for reference.
+        - The method utilizes PyTorch to store the diameter as a tensor.
+
+        Examples:
+        ---------
+        To calculate and log the tree diameter:
+        >>> tree_diameter = instance.diameter()
         """
         tree_diameter = torch.tensor(self.contents.diameter())
         self._log_info(f"Tree diameter: {tree_diameter.item()}")
         return tree_diameter
-
+    ################################################################################################
     def normalize(self) -> None:
         """
-        Normalize the tree branch lengths so that the tree's diameter is 1.
+        Normalize tree branch lengths such that the tree's diameter is 1.
+
+        This method scales the branch lengths of the tree so that the overall diameter
+        of the tree becomes 1. If the tree's diameter is zero, normalization is not performed.
+
+        Parameters:
+        -----------
+        None
+
+        Returns:
+        --------
+        None
+
+        Notes:
+        ------
+        - The function traverses the tree in post-order to ensure all branch lengths are scaled
+          appropriately.
+        - Logs are generated to indicate the normalization status and the applied scale factor.
+
+        Examples:
+        ---------
+        To normalize the tree:
+        >>> instance.normalize()
         """
-        self._log_info(f"Normalizing tree: {self.name}")
-        tree_diameter = self.diameter().item()
+        tree_diameter = self.contents.diameter()
         if not np.isclose(tree_diameter, 0.0):
             scale_factor = 1.0 / tree_diameter
             for node in self.contents.traverse_postorder():
@@ -202,781 +341,820 @@ class Tree:
                     node.set_edge_length(node.get_edge_length() * scale_factor)
             self._log_info(f"Tree normalized with scale factor: {scale_factor}")
         else:
-            self._log_info(f"Tree diameter is zero and cannot be normalized.")
-    
-    def embed(self, dimension: int, geometry: str = 'hyperbolic', **kwargs) -> 'Embedding':
+            self._log_info("Tree diameter is zero and cannot be normalized.")
+    ################################################################################################
+    def embed(self, dim: int, geometry: str = 'hyperbolic', **kwargs) -> 'Embedding':
         """
         Embed the tree into a specified geometric space (hyperbolic or Euclidean).
 
+        This method handles the embedding of a tree into either hyperbolic or Euclidean space
+        based on the specified geometry and additional parameters.
+
         Parameters:
-        - dimension (int): The number of dimensions for the embedding (required).
-        - geometry (str): Type of geometric space to use: 'hyperbolic' or 'euclidean' (default is 'hyperbolic').
-        - accurate (bool, optional): Accurate embedding. 
-          Choices are False for a basic embedding or True for an advanced, optimized embedding (default is False).
-        - total_epochs (int, optional): Number of epochs for optimization in accurate mode (default is 2000).
-        - initial_lr (float, optional): Initial learning rate for the optimization process (default is 0.1).
-        - max_diameter (float, optional): Maximum diameter for scaling the distance matrix (default is 10.0).
-        - enable_save (bool, optional): Whether to save intermediate states during optimization (default is True).
-        - enable_movie (bool, optional): Whether to generate a visualization of the embedding process (default is True).
-        - learning_rate (float, optional): Specific learning rate for the optimization process (default is None, which uses adaptive learning).
-        - scale_learning (callable, optional): Function to dynamically adjust the scale during optimization (default is None).
-        - weight_exponent (float, optional): Exponent for weights in optimization, affecting how distances are weighted (default is None).
-        
+        -----------
+        dim : int
+            The dimensionality of the geometric space for the embedding.
+        geometry : str, optional
+            The geometric space to embed into ('hyperbolic' or 'Euclidean'). Default is 'hyperbolic'.
+        **kwargs : dict
+            Additional parameters for the embedding process. Expected keys:
+            - 'precise_opt' (bool): If True, performs precise embedding.
+            - 'epochs' (int): Number of epochs for the optimization process.
+            - 'lr_init' (float): Initial learning rate for the optimization process.
+            - 'dist_cutoff' (float): Maximum distance cutoff for the embedding.
+            - 'export_video' (bool): If True, exports a video of the embedding process.
+            - 'save_mode' (bool): If True, saves the embedding object.
+            - 'scale_fn' (callable): Optional scale learning function (boolean) for the optimization process.
+            - 'lr_fn' (callable): Optional learning rate function for the optimization process.
+            - 'weight_exp_fn' (callable): Optional weight exponent function for the optimization process.
+
         Returns:
-        - Embedding: The resulting embedding of the tree in the specified geometric space.
+        --------
+        Embedding
+            An Embedding object containing the geometric embedding points and their corresponding labels.
 
         Raises:
-        - ValueError: If 'dimension' is not provided.
-        - RuntimeError: For any errors encountered during the embedding process.
+        -------
+        ValueError
+            If the 'dim' parameter is not provided.
+        Exception
+            If an error occurs during the embedding process.
+
+        Notes:
+        ------
+        The function will save the embedding object and potentially export a video if the corresponding
+        parameters are set to True.
+
+        Examples:
+        ---------
+        To embed in hyperbolic space:
+        >>> embedding = instance.embed(dim=2, geometry='hyperbolic')
+
+        To embed in Euclidean space with precise optimization:
+        >>> embedding = instance.embed(dim=2, geometry='Euclidean', precise_opt=True, export_video=True)
         """
-
-        if dimension is None:
+        if dim is None:
             raise ValueError("The 'dimension' parameter is required.")
-        accurate        = kwargs.get('accurate', conf.ENABLE_ACCURATE_OPTIMIZATION)
-        total_epochs    = kwargs.get('total_epochs', conf.TOTAL_EPOCHS)
-        initial_lr      = kwargs.get('initial_lr', conf.INITIAL_LEARNING_RATE)
-        max_diameter    = kwargs.get('max_diameter', conf.MAX_RANGE)
-        enable_save     = kwargs.get('enable_save', conf.ENABLE_SAVE_MODE)
-        enable_movie    = kwargs.get('enable_movie', conf.ENABLE_VIDEO_EXPORT)
-        learning_rate   = kwargs.get('learning_rate', None)
-        scale_learning  = kwargs.get('scale_learning', None)
-        weight_exponent = kwargs.get('weight_exponent', None)
-        enable_save     = enable_movie or enable_save
-        
-        if geometry == 'hyperbolic':
-            try:
-                scale_factor = max_diameter / self.diameter()
-                initial_curvature = -(scale_factor ** 2)
-                distance_matrix = self.distance_matrix() * scale_factor
+        params = {  
+            key: kwargs.get(key, default) for key, default in {
+                'precise_opt': conf.ENABLE_ACCURATE_OPTIMIZATION,
+                'epochs': conf.TOTAL_EPOCHS,
+                'lr_init': conf.INITIAL_LEARNING_RATE,
+                'dist_cutoff': conf.MAX_RANGE,
+                'export_video': conf.ENABLE_VIDEO_EXPORT,
+                'save_mode': conf.ENABLE_SAVE_MODE,
+                'scale_fn': None,
+                'lr_fn': None,
+                'weight_exp_fn': None
+            }.items()
+        }
+        params['save_mode'] |= params['export_video']
+        params['export_video'] &= params['precise_opt']
 
-                # Naive hyperbolic embedding
-                self._log_info("Initiating naive embedding of the tree in hyperbolic space.")
-                gramian = -torch.cosh(distance_matrix)
-                points = utils.lgram_to_points(gramian, dimension)
-                for n in range(points.size(1)):
-                    points[:,n] = utils.project_to_hyperbolic_space(points[:,n])
-                    points[0,n] = torch.sqrt(1+torch.sum(points[1:,n]**2))
-                embeddings = embedding.LoidEmbedding(points=points, labels = self.terminal_names(), curvature=initial_curvature)
-                self._log_info("Naive hyperbolic embedding completed.")
+        try:
+            embedding = (self._embed_hyperbolic if geometry == 'hyperbolic' else self._embed_euclidean)(dim, **params)
+        except Exception as e:
+            self._log_info(f"Error during embedding: {e}")
+            raise
 
-                if accurate:
-                    self._log_info("Initiating precise hyperbolic embedding.")
-                    initial_tangents = utils.hyperbolic_log(points)
-                    tangents, scale = utils.hyperbolic_embedding(   distance_matrix, 
-                                                                    dimension,
-                                                                    initial_tangents    = initial_tangents,
-                                                                    total_epochs        = total_epochs,
-                                                                    log_function        = self._log_info,
-                                                                    learning_rate       = learning_rate,
-                                                                    scale_learning      = scale_learning,
-                                                                    weight_exponent     = weight_exponent,
-                                                                    initial_lr          = initial_lr,
-                                                                    enable_save         = enable_save,
-                                                                    time                = self._current_time
-                                                                )
-                    embeddings.curvature *= np.abs(scale) ** 2
-                    embeddings.points = utils.hyperbolic_exponential(tangents)
-                    self._log_info("Precise hyperbolic embedding completed.")
-            except ValueError as ve:
-                self._log_info(f"Value error during hyperbolic embedding: {ve}")
-                raise
-            except RuntimeError as re:
-                self._log_info(f"Runtime error during hyperbolic embedding: {re}")
-                raise
-            except Exception as e:
-                self._log_info(f"Unexpected error during hyperbolic embedding: {e}")
-                raise
-        else:
-            try:
-                distance_matrix = self.distance_matrix() 
-
-                # Naive hyperbolic embedding
-                self._log_info("Initiating naive embedding of the tree in euclidean space.")
-                n = distance_matrix.size(0)
-                J = torch.eye(n) - torch.ones((n, n)) / n
-                gramian = -0.5*J@distance_matrix@J
-                eigenvalues, eigenvectors = torch.linalg.eigh(gramian)
-                sorted_indices = torch.argsort(eigenvalues, descending=True)
-                eigenvalues = eigenvalues[sorted_indices]
-                eigenvectors = eigenvectors[:, sorted_indices]
-                top_eigenvalues = eigenvalues[:dimension].clamp(min=0)  # Clamp to ensure non-negative
-                top_eigenvectors = eigenvectors[:, :dimension]
-                points = top_eigenvectors * torch.sqrt(top_eigenvalues).unsqueeze(0)
-                points = points.t()
-                embeddings = embedding.EuclideanEmbedding(points=points, labels = self.terminal_names())
-                self._log_info("Naive euclidean embedding completed.")
-
-                # Precise hyperbolic embedding
-                if accurate:
-                    self._log_info("Initiating precise euclidean embedding.")
-                    points = utils.euclidean_embedding( distance_matrix,
-                                                        dimension,
-                                                        initial_points  = points,
-                                                        epochs          = total_epochs,
-                                                        log_function    = self._log_info,
-                                                        learning_rate   = learning_rate,
-                                                        weight_exponent = weight_exponent,
-                                                        initial_lr      = initial_lr,
-                                                        enable_save     = enable_save,
-                                                        time            = self._current_time
-                                                      )
-                    embeddings.points = points
-                    self._log_info("Precise euclidean embedding completed.")
-            except ValueError as ve:
-                self._log_info(f"Value error during euclidean embedding: {ve}")
-                raise
-            except RuntimeError as re:
-                self._log_info(f"Runtime error during euclidean embedding: {re}")
-                raise
-            except Exception as e:
-                self._log_info(f"Unexpected error during euclidean embedding: {e}")
-                raise
-
-        if enable_movie and accurate:
-            self._create_figures()
-            fps = total_epochs // conf.VIDEO_LENGTH 
-            self._create_movie(fps = fps)
-        directory = f'{conf.OUTPUT_DIRECTORY}/{self._current_time}'
+        directory = f"{conf.OUTPUT_DIRECTORY}/{self._current_time.strftime('%Y-%m-%d_%H-%M-%S')}"
+        filepath = f"{directory}/{geometry}_embedding_{dim}d.pkl"
         os.makedirs(directory, exist_ok=True)
-        filename = f'{geometry}_space.pkl'
-        filepath = f'{directory}/{filename}'
         try:
             with open(filepath, 'wb') as file:
-                pickle.dump(embeddings, file)
+                pickle.dump(embedding, file)
             self._log_info(f"Object successfully saved to {filepath}")
-        except IOError as ioe:
-            self._log_info(f"IO error while saving the object: {ioe}")
+        except (IOError, pickle.PicklingError, Exception) as e:
+            self._log_info(f"Error while saving object: {e}")
             raise
-        except pickle.PicklingError as pe:
-            self._log_info(f"Pickling error while saving the object: {pe}")
-            raise
-        except Exception as e:
-            self._log_info(f"Unexpected error while saving the object: {e}")
-            raise
+
+        if params['export_video']:
+            self._gen_video(fps=params['epochs'] // conf.VIDEO_LENGTH)
+
+        return embedding
+    ################################################################################################
+    def _embed_euclidean(self, dim: int, **params) -> 'Embedding':
+        """Handle naive and precise Euclidean embeddings."""
+        dist_mat = self.distance_matrix()[0]
+        # Naive Euclidean embedding
+        self._log_info("Initiating naive Euclidean embedding.")
+        points = self._naive_euclidean_embedding(dist_mat, dim)
+        embeddings = embedding.EuclideanEmbedding(points=points, labels=self.terminal_names())
+        self._log_info("Naive Euclidean embedding completed.")
+        if params['precise_opt']:
+            self._log_info("Initiating precise Euclidean embedding.")
+            embeddings.points = self._precise_euclidean_embedding(dist_mat, dim, points, **params)
+            self._log_info("Precise Euclidean embedding completed.")
         return embeddings
-
-    def _create_figures(self):
-        """
-        Create and save figures based on RE matrices and distance matrices.
-        """
-        timestamp = self._current_time
-        output_dir = f'{conf.OUTPUT_FIGURES_DIRECTORY}/{timestamp}'
-        os.makedirs(output_dir, exist_ok=True)
-        path = f'{conf.OUTPUT_DIRECTORY}/{timestamp}'
-        weight_history = -np.load(os.path.join(path, "weight_history.npy"))
-        lr_history = np.log10(np.abs(np.load(os.path.join(path, "lr_history.npy"))))        
-        npy_files = sorted([f for f in os.listdir(path) if f.startswith('RE') and f.endswith('.npy')],
-                           key=lambda f: int(f.split('_')[1].split('.')[0]))
-        total_epochs = len(npy_files)
-        scale_history_path = os.path.join(path, "scale_history.npy")
-        if os.path.exists(scale_history_path):
-            scale_history = np.load(scale_history_path)
-            flag = True
-        else:
-            flag = False
-
-        log10_distance_matrix = np.log10(self.distance_matrix() + conf.EPSILON)
-        mask = np.eye(log10_distance_matrix.shape[0], dtype=bool)
-
-        rms_values = []
-        upper_diag_indices = None
-        min_heatplot = float('inf')
-        max_heatplot = float('-inf')
-        for file_name in npy_files:
-            re_matrix = np.load(os.path.join(path, file_name))
-            log10_re_matrix = np.log10(re_matrix + conf.EPSILON)
-            np.fill_diagonal(log10_re_matrix, np.nan)
-            current_min = np.nanmin(log10_re_matrix)
-            current_max = np.nanmax(log10_re_matrix)
-            min_heatplot = min(min_heatplot, current_min)
-            max_heatplot = max(max_heatplot, current_max)
-            if upper_diag_indices is None:
-                upper_diag_indices = np.triu_indices_from(re_matrix, k=1)
-            upper_diag_elements = re_matrix[upper_diag_indices]
-            rms = np.sqrt(np.mean(upper_diag_elements))
-            rms_values.append(rms)
-        del log10_re_matrix, re_matrix, upper_diag_indices
-        gc.collect()
-
-        if rms_values:
-            max_rms = max(rms_values) * 1.1
-            min_rms = min(rms_values) * 0.9
-        else:
-            max_rms = 1
-            min_rms = 0
-        max_lr = max(lr_history)+0.1
-        min_lr = min(lr_history)-0.1
-
-        for i, file_name in enumerate(npy_files):
-            epoch = int(file_name.split('_')[1].split('.')[0])
-            save_path = os.path.join(output_dir, f'heatmap_{epoch}.png')
-
-            log10_re_matrix = np.log10(np.load(os.path.join(path, file_name)) + conf.EPSILON)
-
-            fig = plt.figure(figsize=(12, 12), tight_layout=True)
-            gs = fig.add_gridspec(4, 2, height_ratios=[1, 1, 2, 2], width_ratios=[1, 1])
-
-            ax_rms = fig.add_subplot(gs[0, :])
-            ax_rms.plot(range(1, len(rms_values[:epoch]) + 1), rms_values[:epoch], marker='o')
-            ax_rms.set_xlim(1, total_epochs)
-            ax_rms.set_ylim(min_rms, max_rms)
-            ax_rms.set_xlabel('Epoch')
-            ax_rms.set_ylabel('RMS of RE')
-            ax_rms.set_title('Evolution of Relative Errors')
-
-            # Additional plots for weight and learning rate
-            ax_weight = fig.add_subplot(gs[1, 0])
-            epochs_range = range(1, len(weight_history[:epoch]) + 1)
-            weight_color = 'blue'
-            highlight_color = 'red'
-            if flag:
-                highlight_mask = scale_history[:epoch]
-
-                ax_weight.plot(epochs_range, weight_history[:epoch], marker='o', linestyle='', color=weight_color, label='Scale Learning Disabled')
-                if highlight_mask is not None:
-                    highlighted_weights = [weight_history[i] if highlight_mask[i] else np.nan for i in range(len(weight_history[:epoch]))]
-                    ax_weight.plot(epochs_range, highlighted_weights, marker='o', linestyle='', color=highlight_color, label='Scale Learning Enabled')
-
-                ax_weight.set_xlim(1, total_epochs)
-                ax_weight.set_ylim(0, 1)
-                ax_weight.set_xlabel('Epoch')
-                ax_weight.set_ylabel('-Weight Exponent')
-                ax_weight.set_title('Evolution of Weights')
-                ax_weight.legend()
-            else:
-                ax_weight.plot(epochs_range, weight_history[:epoch], marker='o', linestyle='', color=weight_color)
-                ax_weight.set_xlim(1, total_epochs)
-                ax_weight.set_ylim(0, 1)
-                ax_weight.set_xlabel('Epoch')
-                ax_weight.set_ylabel('-Weight Exponent')
-                ax_weight.set_title('Evolution of Weights')
-
-            ax_lr = fig.add_subplot(gs[1, 1])
-            ax_lr.plot(range(1, len(lr_history[:epoch]) + 1), lr_history[:epoch], marker='o')
-            ax_lr.set_xlim(1, total_epochs)
-            ax_lr.set_ylim(min_lr, max_lr)
-            ax_lr.set_xlabel('Epoch')
-            ax_lr.set_ylabel('log10(Learning Rate)')
-            ax_lr.set_title('Evolution of Learning Rates')
-
-            ax1 = fig.add_subplot(gs[2:, 0])
-            ax2 = fig.add_subplot(gs[2:, 1])
-
-            # sns.heatmap(log10_re_matrix, mask=mask, ax=ax1, cmap='viridis', cbar_kws={'label': 'log10(RE)'}, vmin=min_heatplot, vmax=max_heatplot, square=True, xticklabels=False, yticklabels=False)
-            # ax1.set_title(f'Relative Error (RE) Matrix (Epoch {epoch})')
-            # cbar = ax1.collections[0].colorbar
-            # cbar.set_ticks(cbar.get_ticks())
-            # cbar.set_ticklabels([f'{tick:.2f}' for tick in cbar.get_ticks()])
-
-
-            log10_re_matrix_masked = np.where(mask, np.nan, log10_re_matrix)
-            log10_distance_matrix_masked = np.where(mask, np.nan, log10_distance_matrix)
-
-            im1 = ax1.imshow(log10_re_matrix_masked, cmap='viridis', vmin=min_heatplot, vmax=max_heatplot)
-            ax1.set_title(f'Relative Error (RE) Matrix (Epoch {epoch})')
-            # Add colorbar
-            cbar1 = fig.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04)
-            cbar1.set_label('log10(RE)')
-            cbar1.set_ticks(cbar1.get_ticks())
-            cbar1.set_ticklabels([f'{tick:.2f}' for tick in cbar1.get_ticks()])
-
-            # Plot second heatmap (Distance Matrix)
-            im2 = ax2.imshow(log10_distance_matrix_masked, cmap='viridis')
-            ax2.set_title('Distance Matrix')
-
-            # Add colorbar
-            cbar2 = fig.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04)
-            cbar2.set_label('log10(Distance)')
-            cbar2.set_ticks(cbar2.get_ticks())
-            cbar2.set_ticklabels([f'{tick:.2f}' for tick in cbar2.get_ticks()])
-
-            # sns.heatmap(log10_distance_matrix, mask=mask, ax=ax2, cmap='viridis', cbar_kws={'label': 'log10(Distance)'}, square=True, xticklabels=False, yticklabels=False)
-            # ax2.set_title('Distance Matrix')
-            # cbar = ax2.collections[0].colorbar
-            # cbar.set_ticks(cbar.get_ticks())
-            # cbar.set_ticklabels([f'{tick:.2f}' for tick in cbar.get_ticks()])
-            # Hide x and y ticks for heatmaps
-            for ax in (ax1, ax2):
-                ax.set_xticks([])
-                ax.set_yticks([])
-
-            # Add thin black frame around heatmaps
-            for ax in [ax1, ax2]:
-                rect = patches.Rectangle((0, 0), 1, 1, transform=ax.transAxes, color='black', fill=False, linewidth=2)
-                ax.add_patch(rect)
-
-            plt.tight_layout()
-            plt.savefig(save_path, dpi=200)
-            plt.close('all')
-
-            # Free memory explicitly
-            del log10_re_matrix, fig, gs, ax_rms, ax_weight, ax_lr, ax1, ax2
-            gc.collect()
-            self._log_info(f"Figure saved: {save_path}")
-        gc.collect()
-
-    def _create_movie(self, fps: int = 10):
-        """
-        Create a movie from the saved heatmaps.
-
-        Parameters:
-        - fps (int): Frames per second for the movie.
-        """
-        
+    ################################################################################################
+    def _naive_euclidean_embedding(self, dist_mat, dim):
+        n = len(dist_mat)
+        J = torch.eye(n) - 1/n
+        G = -0.5 * J @ dist_mat @ J
+        vals, vecs = (torch.linalg.eigh(G) if dim >= n else 
+                      map(torch.tensor, spla.eigsh(G.cpu().numpy(), k=dim, which='LM')))
+        X = vecs[:, vals.argsort(descending=True)] * vals.clamp(min=0).sqrt()
+        return X.t() if dim <= n else torch.cat([X.t(), torch.zeros(dim - n, n)], dim=0)
+    ################################################################################################
+    def _precise_euclidean_embedding(self, dist_mat, dim, points, **params):
+        return utils.euclidean_embedding(dist_mat, dim, init_pts=points, log_fn=self._log_info, time_stamp=self._current_time, **params)
+    ################################################################################################
+    def _embed_hyperbolic(self, dim: int, **params) -> 'Embedding':
+        """Handle naive and precise hyperbolic embeddings."""
+        scale_factor = params['dist_cutoff'] / self.diameter()
+        dist_mat = self.distance_matrix()[0] * scale_factor
+        # Naive hyperbolic embedding
+        self._log_info("Initiating naive hyperbolic embedding.")
+        points = self._naive_hyperbolic_embedding(dist_mat, dim)
+        embeddings = embedding.LoidEmbedding(points=points, labels=self.terminal_names(), curvature=-(scale_factor ** 2))
+        self._log_info("Naive hyperbolic embedding completed.")
+        if params['precise_opt']:
+            self._log_info("Initiating precise hyperbolic embedding.")
+            points, scale = self._precise_hyperbolic_embedding(dist_mat, dim, points, **params)
+            embeddings.points = points
+            embeddings.curvature *= scale**2
+        return embeddings
+    ################################################################################################
+    def _naive_hyperbolic_embedding(self, dist_mat, dim):
+        gramian = -torch.cosh(dist_mat)
+        points = utils.lgram_to_pts(gramian, dim)
+        for n in range(points.size(1)):
+            points[:, n] = utils.hyperbolic_proj(points[:, n])
+            points[0, n] = torch.sqrt(1 + torch.sum(points[1:, n] ** 2))
+        return points
+    ################################################################################################
+    def _precise_hyperbolic_embedding(self, dist_mat, dim, points, **params):
+        pts, scale = utils.hyperbolic_embedding(
+            dist_mat, dim, init_pts=points, epochs=params['epochs'],
+            log_fn=self._log_info, lr_fn=params['lr_fn'], scale_fn=params['scale_fn'], 
+            weight_exp_fn=params['weight_exp_fn'], lr_init=params['lr_init'], 
+            save_mode=params['save_mode'], time_stamp=self._current_time
+        )
+        self._log_info("Precise hyperbolic embedding completed.")
+        return pts, scale
+    ################################################################################################
+    def _gen_video(self, fps: int = 10):
+        """Generate a video of RE matrices evolution without saving individual frames."""
         timestamp = self._current_time    
-        output_dir = f'{conf.OUTPUT_VIDEO_DIRECTORY}/{timestamp}'
-        os.makedirs(output_dir, exist_ok=True)
-
-        image_dir = f'{conf.OUTPUT_FIGURES_DIRECTORY}/{timestamp}'
-        image_files = [f for f in os.listdir(image_dir) if f.endswith('.png')]
-
-        # Custom sorting function to sort filenames numerically based on the heatmap number
-        def extract_number(filename):
-            base_name = filename.split('_')[-1].replace('.png', '')
-            return int(base_name)
-
-        image_files.sort(key=extract_number)  # Ensure files are in the correct numerical order
-        
-        total_epoch = len(image_files)
-        # Construct full file paths for images
-        image_files = [os.path.join(image_dir, f) for f in image_files]
-        movie_path = os.path.join(output_dir, 're_vs_distance_evolution.mp4')
+        base = os.path.join(conf.OUTPUT_DIRECTORY, timestamp.strftime('%Y-%m-%d_%H-%M-%S'))
+        weights = -np.load(os.path.join(base, "weight_exponents.npy"))
+        lrs = np.log10(np.load(os.path.join(base, "learning_rates.npy")) + conf.EPSILON)
         try:
-            with imageio.get_writer(movie_path, fps=fps) as writer:
-                for image_file in image_files:
-                    image = imageio.imread(image_file)
-                    writer.append_data(image)
+            scales = np.load(os.path.join(base, "scales.npy"), None)
+        except FileNotFoundError:
+            print("File not found. Proceeding without loading scales.")
+            scales = None  # Or handle appropriately
+        
+        re_files = sorted(
+            [f for f in os.listdir(base) if f.startswith('RE') and f.endswith('.npy')],
+            key=lambda f: int(f.split('_')[1].split('.')[0])
+            )[:len(weights)]  # Keep only the top N files
 
-            self._log_info(f"Movie created: {movie_path}")
-        except Exception as e:
-            self._log_info(f"Error creating movie: {e}")
-            raise
+        re_mats = [np.load(os.path.join(base, file)) for file in re_files]
 
-    def __repr__(self) -> str:
-        """
-        Return a string representation of the Tree object.
+        tri_idx = np.triu_indices_from(re_mats[0], k=1)
+        min_re, max_re, rms_vals = float('inf'), float('-inf'), []
+        for mat in re_mats:
+            tri_vals = mat[tri_idx]
+            min_re = min(min_re, np.nanmin(tri_vals))
+            max_re = max(max_re, np.nanmax(tri_vals))
+            rms_vals.append(np.sqrt(np.mean(tri_vals)))
+        
+        min_re, max_re = np.log10(min_re + conf.EPSILON), np.log10(max_re + conf.EPSILON)
+        rms_min, rms_max = (min(rms_vals) * 0.9, max(rms_vals) * 1.1) if rms_vals else (0, 1)
+        lr_min, lr_max = min(lrs) - 0.1, max(lrs) + 0.1
+        log_dist = np.log10(self.distance_matrix()[0] + conf.EPSILON)
+        mask = np.eye(log_dist.shape[0], dtype=bool)
+        
+        fig, gs = plt.figure(figsize=(12, 12), tight_layout=True), GridSpec(4, 2, height_ratios=[1, 1, 2, 2], width_ratios=[1, 1])
+        ax_rms = fig.add_subplot(gs[0, :])
+        ax_weights = fig.add_subplot(gs[1, 0])
+        ax_lr = fig.add_subplot(gs[1, 1])
+        ax_re, ax_dist = fig.add_subplot(gs[2:, 0]), fig.add_subplot(gs[2:, 1])
+        im_re = ax_re.imshow(np.zeros_like(re_mats[0]), cmap='viridis', vmin=min_re, vmax=max_re)
+        im_dist = ax_dist.imshow(np.where(mask, np.nan, log_dist), cmap='viridis')
+        fig.colorbar(im_re, ax=ax_re, fraction=0.046, pad=0.04, label='log10(RE)')
+        fig.colorbar(im_dist, ax=ax_dist, fraction=0.046, pad=0.04, label='log10(Distance)')
+        
+        def update(epoch):
+            ax_rms.clear()
+            ax_weights.clear()
+            ax_lr.clear()
+            ax_rms.plot(range(1, epoch + 1), rms_vals[:epoch], marker='o')
+            ax_rms.set(xlim=(1, len(re_mats)), ylim=(rms_min, rms_max), xlabel='Epoch', ylabel='RMS of RE', title='Evolution of Relative Errors')
+            ax_weights.plot(range(1, epoch + 1), weights[:epoch], 'bo')
 
-        Returns:
-            str: String representation of the tree.
-        """
-        repr_str = f"Tree({self.name})"
-        self._log_info(f"Tree representation: {repr_str}")
-        return repr_str
-#############################################################################################
-#############################################################################################
-#############################################################################################
+            if scales is not None:
+                ax_weights.plot(range(1, epoch + 1), np.where(scales[:epoch], weights[:epoch], np.nan), 'ro', label='Scale Learning Enabled')
+                ax_weights.legend()
+            ax_weights.set(xlim=(1, len(re_mats)), ylim=(0, 1), xlabel='Epoch', ylabel='-Weight Exponent', title='Evolution of Weights')
+            
+            ax_lr.plot(range(1, epoch + 1), lrs[:epoch], marker='o')
+            ax_lr.set(xlim=(1, len(re_mats)), ylim=(lr_min, lr_max), xlabel='Epoch', ylabel='log10(Learning Rate)', title='Evolution of Learning Rates')
+            
+            im_re.set_array(np.where(mask, np.nan, np.log10(re_mats[epoch] + conf.EPSILON)))
+            ax_re.set_title(f'Relative Error (RE) Matrix (Epoch {epoch})')
+            for ax in (ax_re, ax_dist):
+                ax.set_xticks([]), ax.set_yticks([])
+                ax.add_patch(patches.Rectangle((0, 0), 1, 1, transform=ax.transAxes, color='black', fill=False, linewidth=2))
+        
+        self._log_info(f"Video is being created. Please be patient.")
+        # Now generate the animation
+        ani = animation.FuncAnimation(fig, update, frames=len(re_mats), interval=1000 // fps)
+        
+        out_dir = os.path.join(conf.OUTPUT_VIDEO_DIRECTORY, timestamp.strftime('%Y-%m-%d_%H-%M-%S'))
+        os.makedirs(out_dir, exist_ok=True)
+        vid_path = os.path.join(out_dir, 're_dist_evo.mp4')
+        ani.save(vid_path, writer='ffmpeg', fps=fps)
+        
+        self._log_info(f"Video created: {vid_path}")
 #############################################################################################
 class MultiTree:
-    def __init__(self, *source: Union[str, List[Union['Tree', 'ts.Tree']]], enable_logging: bool = False):
-        """
-        Initialize a MultiTree object. Load trees from a source, which can be:
-         -- a string (file path); trees are loaded from the file
-         -- a list of Tree objects
-         -- a list of treeswift.Tree objects (automatically wrapped in Tree instances)
+    """
+    Class MultiTree
+    ---------------
 
+    Represents a collection of tree objects with methods to manipulate and analyze them.
+
+    Initialization:
+    ---------------
+    __init__(self, *source: Union[str, List[Union['Tree', 'ts.Tree']]])
+        Initializes a MultiTree object.
         Parameters:
-        enable_logging (bool): Flag to enable or disable logging.
-        """
-        self._logger = None
-        self._current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-        if enable_logging:
-            self._setup_logging()
+            source: str or list of Tree objects or treeswift.Tree objects.
+                    - If a string (file path), trees are loaded from the file.
+                    - If a list of Tree or treeswift.Tree objects, trees are wrapped in Tree instances.
 
-        self.trees = []  # Store trees as a list instead of a dictionary
+    Methods:
+    --------
+    update_time(self)
+        Updates the current time for the MultiTree object.
+
+    copy(self) -> 'MultiTree'
+        Creates a deep copy of the MultiTree object.
+
+    save(self, file_path: str, format: str = 'newick') -> None
+        Saves the MultiTree object to a file in the specified format.
+        Parameters:
+            file_path: str
+                The file path to save the tree.
+            format: str, optional (default='newick')
+                The format to save the tree (e.g., 'newick').
+
+    terminal_names(self) -> List[str]
+        Retrieves terminal (leaf) names from all trees in the MultiTree object.
+
+    common_terminals(self) -> Set[str]
+        Identifies terminal (leaf) names that are common across all trees in the MultiTree object.
+
+    distance_matrix(self) -> np.ndarray
+        Computes the pairwise distance matrix for all trees in the MultiTree object.
+
+    normalize(self) -> None
+        Normalizes the branch lengths of all trees such that each tree's diameter is 1.
+
+    embed(self, dimension: int, geometry: str = 'hyperbolic', **kwargs) -> 'Embedding'
+        Embeds all trees into a specified geometric space (hyperbolic or Euclidean).
+        Parameters:
+            dimension: int
+                The dimension of the embedding space.
+            geometry: str, optional (default='hyperbolic')
+                The geometry of the embedding space ('hyperbolic' or 'euclidean').
+            **kwargs: additional keyword arguments for embedding.
+
+    Attributes:
+    -----------
+    _current_time : datetime
+        The current time for logging and saving purposes.
+    name : str
+        The name of the MultiTree object.
+    trees : List[Tree]
+        A list of Tree objects contained in the MultiTree object.
+    """
+
+    def __init__(self, *source: Union[str, List[Union['Tree', 'ts.Tree']]]):
+        self._current_time, self.trees = get_time() or datetime.now(), []
         if len(source) == 1 and isinstance(source[0], str):
-            # If the input is a file path, load trees from file
-            file_path = source[0]
-            self.name = os.path.basename(file_path)
+            self.name, file_path = os.path.basename(source[0]), source[0]
             self.trees = self._load_trees(file_path)
-            self._log_info(f"Initialized MultiTree with trees from file: {file_path}")
         elif len(source) == 2 and isinstance(source[0], str) and isinstance(source[1], list):
-            # If the input is a list of Tree objects or treeswift.Tree objects
-            self.name = source[0]
-            if all(isinstance(t, Tree) for t in source[1]):
-                self.trees = source[1]  # Use as-is if they are Tree instances
-            elif all(isinstance(t, ts.Tree) for t in source[1]):
-                self.trees = [Tree(f"Tree_{i}", ts_tree) for i, ts_tree in enumerate(source[1])]
-            else:
-                raise ValueError("All elements in the list must be either Tree or treeswift.Tree instances.")
-            self._log_info(f"Initialized MultiTree with a list of trees. Name: {self.name}")
+            self.name, tree_list = source[0], source[1]
+            self.trees = (
+                tree_list if all(isinstance(t, Tree) for t in tree_list)
+                else [Tree(f"Tree_{i}", t) for i, t in enumerate(tree_list)]
+                if all(isinstance(t, ts.Tree) for t in tree_list)
+                else ValueError("List must contain only Tree or treeswift.Tree instances.")
+            )
         else:
-            raise ValueError("Provide a valid source: a file path as a string or a name (string) and a list of Tree or treeswift.Tree objects.")
-
-    def __getitem__(self, index: Union[int, slice]) -> Union['Tree', 'MultiTree']:
-        """
-        Make MultiTree subscriptable. Allows retrieving individual trees or a sub-MultiTree.
-        """
-        if isinstance(index, slice):
-            return MultiTree(self.name, self.trees[index])
-        return self.trees[index]
-
-    def __len__(self) -> int:
-        """Return the number of trees in the MultiTree."""
-        length = len(self.trees)
-        self._log_info(f"Number of trees: {length}")
-        return len(self.trees)
-
-    def __iter__(self) -> Iterator['Tree']:
-        """Allow iteration over the trees in MultiTree."""
-        self._log_info("Returning an iterator over trees.")
-        return iter(self.trees)
-
-    def __contains__(self, item) -> bool:
-        """
-        Check if an item is in the collection.
-
-        Parameters:
-        item: The item to check for.
-
-        Returns:
-        bool: True if the item is in the collection, False otherwise.
-        """
-        contains = item in self.trees
-        self._log_info(f"Item {'is' if contains else 'is not'} in MultiTree.")
-        return contains
-
-    def __repr__(self) -> str:
-        """
-        Return a string representation of the MultiTree object.
-        """
-        repr_str = f"MultiTree({self.name}, {len(self.trees)} trees)"
-        self._log_info(f"Representation: {repr_str}")
-        return repr_str
-
-
-    def _load_trees(self, file_path: str) -> List['Tree']:
-        """
-        Load trees from a Newick file and return a list of Tree objects.
-        """
-        if not os.path.exists(file_path):
-            self._log_info(f"The file {file_path} does not exist")
-            raise FileNotFoundError(f"The file {file_path} does not exist")
-        
-        self._log_info(f"Loading multitree from file: {file_path}")
-        tree_list = []
-        try:
-            for idx, tree in enumerate(ts.read_tree_newick(file_path)):
-                tree_list.append(Tree(f'tree_{idx+1}', tree))
-            self._log_info(f"Loaded {len(tree_list)} trees from {file_path}.")
-        except Exception as e:
-            self._log_info(f"Failed to load trees from {file_path}: {e}")
-            raise ValueError(f"Failed to load trees from {file_path}: {e}")
-        return tree_list
-
-    def _setup_logging(self, log_dir: str = conf.LOG_DIRECTORY, log_level: int = logging.INFO, log_format: str = '%(asctime)s - %(levelname)s - %(message)s'):
-        """
-        Set up logging configuration.
-        """
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"MultiTree_{self._current_time}.log")
-        logging.basicConfig(filename=log_file, level=log_level, format=log_format)
-        self._logger = logging.getLogger(__name__)
-
+            raise ValueError("Invalid input format.")
+    ################################################################################################
     def _log_info(self, message: str):
+        if logging_enabled(): get_logger().info(message)
+    ################################################################################################
+    def update_time(self):
         """
-        Log an informational message.
-        """
-        if self._logger:
-            self._logger.info(message)
+        Updates the current time to the system's current date and time.
 
+        This function sets the internal attribute '_current_time' to the current date
+        and time using `datetime.now()`. It also logs the updated time information.
+
+        Example:
+            >>> obj = MultiTree()
+            >>> obj.update_time()
+            Current time updated to now.
+
+        Attributes:
+            _current_time (datetime): The current date and time.
+            _log_info (function): A method that logs informational messages.
+
+        """
+        self._current_time = datetime.now()
+        self._log_info("Current time updated to now.")
+    ################################################################################################
+    def _load_trees(self, file_path: str) -> List['Tree']:
+        if not os.path.exists(file_path): raise FileNotFoundError(f"File not found: {file_path}")
+        try:
+            return [Tree(f'tree_{i+1}', t) for i, t in enumerate(ts.read_tree_newick(file_path))]
+        except Exception as e:
+            raise ValueError(f"Error loading trees: {e}")
+    ################################################################################################
+    def __getitem__(self, index: Union[int, slice]) -> Union['Tree', 'MultiTree']:
+        """Retrieve individual trees or a sub-MultiTree."""
+        return MultiTree(self.name, self.trees[index]) if isinstance(index, slice) else self.trees[index]
+    ################################################################################################
+    def __len__(self) -> int:
+        """Return number of trees."""
+        return len(self.trees)
+    ################################################################################################
+    def __iter__(self) -> Iterator['Tree']:
+        """Iterate over trees."""
+        return iter(self.trees)
+    ################################################################################################
+    def __contains__(self, item) -> bool:
+        """Check if item exists in MultiTree."""
+        return item in self.trees
+    ################################################################################################
+    def __repr__(self) -> str:
+        """String representation of MultiTree."""
+        return f"MultiTree({self.name}, {len(self.trees)} trees)"
+    ################################################################################################
     def copy(self) -> 'MultiTree':
         """
-        Create a deep copy of the MultiTree object.
-        """
-        multitree_copy = copy.deepcopy(self)
-        self._log_info(f"MultiTree '{self.name}' copied.")
-        return multitree_copy
+        Creates a deep copy of the current MultiTree instance.
 
-    def save(self, file_path: str, format: str = 'newick') -> None:
+        This function generates a deep copy of the MultiTree object, ensuring that all 
+        nested objects are also copied. It logs the copy action for reference.
+
+        Example:
+            >>> obj = MultiTree()
+            >>> obj_copy = obj.copy()
+            MultiTree 'TreeName' copied.
+
+        Returns:
+            MultiTree: A deep copy of the current instance.
+
+        Attributes:
+            name (str): The name of the MultiTree instance.
+            _log_info (function): A method that logs informational messages.
+
+        """
+        self._log_info(f"MultiTree '{self.name}' copied.")
+        return copy.deepcopy(self)
+    ################################################################################################
+    def save(self, path: str, fmt: str = 'newick') -> None:
         """
         Save all trees to a file in the specified format.
-        """
-        if format == 'newick':
-            try:
-                with open(file_path, 'w') as f:
-                    for tree in self.trees:
-                        f.write(tree.contents.newick() + "\n")
-                self._log_info(f"Trees saved to {file_path} in {format} format.")
-            except Exception as e:
-                self._log_info(f"Failed to save trees to {file_path}: {e}")
-                raise
-        else:
-            self._log_info(f"Unsupported format: {format}")
-            raise ValueError(f"Unsupported format: {format}")
 
-    def distance_matrix(self, 
-                        func: Callable[[torch.Tensor], torch.Tensor] = torch.nanmean, 
-                        confidence: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """
-        Compute the distance matrix of each individual tree and compute the element-wise aggregate
-        (mean, median, max, min) of them using PyTorch tensors. The aggregate function can be specified as an input.
-        
-        Additionally, return a confidence matrix indicating the ratio of non-NaN values at each element.
+        This function saves the trees in the MultiTree instance to a file at the 
+        specified path. It supports the 'newick' format for saving trees.
 
-        Parameters:
-        func (Callable[[torch.Tensor], torch.Tensor]): Function to compute the aggregate. Default is torch.nanmean.
-        confidence (bool): If True, also return the confidence matrix. Default is False.
-
-        Returns:
-        Tuple[torch.Tensor, Optional[torch.Tensor]]:
-            - The aggregated distance matrix as a torch.Tensor.
-            - (Optional) Confidence matrix indicating the ratio of non-NaN values.
-        """
-
-        if not self.trees:
-            self._log_info("No trees available to compute distance matrices.")
-            raise ValueError("No trees available to compute distance matrices")
-
-        all_labels = self.terminal_names()
-        n = len(all_labels)
-        
-        stacked_matrices = torch.zeros((len(self.trees),n, n))
-        stacked_counts = torch.zeros((len(self.trees),n, n))
-        cnt = 0
-
-        for tree in self.trees:
-            labels = tree.terminal_names()
-            idx = [all_labels.index(label) for label in labels]
-            idx = torch.tensor(idx)
-            
-            # Populate the distance matrix
-            distance_matrix = torch.full((n, n), float('nan'))
-            distance_matrix[idx[:, None], idx] = tree.distance_matrix()
-            distance_matrix.fill_diagonal_(0)
-            stacked_matrices[cnt,:,:] = distance_matrix
-
-            if confidence:
-                count_matrix = torch.zeros((n, n))  # Matrix to count non-NaN entries
-                count_matrix[idx[:, None], idx] = 1
-                count_matrix.fill_diagonal_(0)
-                stacked_counts[cnt,:,:] = count_matrix
-            cnt = cnt +1
-
-        # Apply the aggregation function element-wise, excluding NaNs
-        aggregated_matrix = func(stacked_matrices, dim=0)
-        if isinstance(aggregated_matrix, tuple):
-            aggregated_matrix = aggregated_matrix[0]
-
-
-        # Identify indices where NaN values exist
-        nan_indices = torch.nonzero(torch.isnan(aggregated_matrix), as_tuple=False)
-        # Iterate over all NaN indices and compute the replacement values
-        aggregated_matrix_ = aggregated_matrix.clone()
-        for idx in nan_indices:
-            i, j = idx[0], idx[1]
-            
-            # Extract non-NaN values in the i-th row and j-th column
-            row_non_nan = aggregated_matrix_[i, ~torch.isnan(aggregated_matrix_[i, :])]
-            col_non_nan = aggregated_matrix_[~torch.isnan(aggregated_matrix_[:, j]), j]
-
-            if row_non_nan.numel() == 0 and col_non_nan.numel() == 0:
-                continue  # No non-NaN values available to estimate
-            combined_non_nan = torch.cat((row_non_nan, col_non_nan))
-            # Replace the NaN value with the estimated value
-            aggregated_matrix[i, j] = func(combined_non_nan)
-
-        self._log_info("Distance matrix computation complete.")
-
-        if confidence:
-            # Compute confidence matrix
-            confidence_matrix = torch.sum(stacked_counts > 0, dim=0) / len(self.trees)
-            self._log_info("Confidence matrix computation complete.")
-            return aggregated_matrix, confidence_matrix
-        else:
-            return aggregated_matrix
-
-    def terminal_names(self) -> List[str]:
-        """
-        Retrieve terminal (leaf) names in the MultiTree.
-
-        Returns:
-            List[str]: List of terminal names.
-        """
-        leaf_names = set()
-        for tree in self.trees:
-            leaf_names.update(tree.terminal_names())
-        leaf_names = sorted(leaf_names)
-        self._log_info(f"Retrieved terminal names for MultiTree: {self.name}")
-        return leaf_names
-
-    def embed(self, dimension: int, geometry: str = 'hyperbolic', **kwargs) -> 'Embedding':
-        """
-        Embed the MultiTree into a specified geometric space (hyperbolic or Euclidean).
-
-        Parameters:
-        - dimension (int): The number of dimensions for the embedding (required).
-        - geometry (str): Type of geometric space to use: 'hyperbolic' or 'euclidean' (default is 'hyperbolic').
-        - accurate (bool, optional): Accurate embedding. 
-          Choices are 'naive' for a basic embedding or 'precise' for an advanced, optimized embedding (default is 'naive').
-        - total_epochs (int, optional): Number of epochs for optimization in accurate mode (default is 2000).
-        - initial_lr (float, optional): Initial learning rate for the optimization process (default is 0.1).
-        - max_diameter (float, optional): Maximum diameter for scaling the distance matrix (default is 10.0).
-        - enable_save (bool, optional): Whether to save intermediate states during optimization (default is True).
-        - learning_rate (float, optional): Specific learning rate for the optimization process (default is None, which uses adaptive learning).
-        - scale_learning (callable, optional): Function to dynamically adjust the scale during optimization (default is None).
-        - weight_exponent (float, optional): Exponent for weights in optimization, affecting how distances are weighted (default is None).
-
-        Returns:
-        - Embedding: The resulting embedding of the tree in the specified geometric space.
+        Args:
+            path (str): The file path where trees will be saved.
+            fmt (str): The format in which to save the trees. Currently, only 'newick' 
+                       format is supported. Defaults to 'newick'.
 
         Raises:
-        - ValueError: If 'dimension' is not provided.
-        - RuntimeError: For any errors encountered during the embedding process.
+            ValueError: If an unsupported format is specified.
+            Exception: If an error occurs while saving the trees, with the error 
+                       information logged.
+
+        Example:
+            >>> obj = MultiTree()
+            >>> obj.save('trees.newick')
+            Saved trees to trees.newick (newick format).
+
+        Attributes:
+            trees (list): A list of tree objects to be saved.
+            _log_info (function): A method that logs informational messages.
+
         """
+        if fmt != 'newick':
+            self._log_info(f"Unsupported format: {fmt}")
+            raise ValueError(f"Unsupported format: {fmt}")
 
-        if dimension is None:
-            raise ValueError("The 'dimension' parameter is required.")
+        try:
+            with open(path, 'w') as f:
+                f.writelines(tree.contents.newick() + "\n" for tree in self.trees)
+            self._log_info(f"Saved trees to {path} ({fmt} format).")
+        except Exception as e:
+            self._log_info(f"Failed to save trees to {path}: {e}")
+            raise
+    ################################################################################################
+    def terminal_names(self) -> List[str]:
+        """
+        Return sorted terminal (leaf) names from all trees.
+
+        This function retrieves terminal (leaf) names from all trees in the MultiTree instance,
+        sorts them in alphabetical order, and logs the retrieval action.
+
+        Returns:
+            List[str]: A sorted list of terminal (leaf) names from all trees.
+
+        Example:
+            >>> obj = MultiTree()
+            >>> names = obj.terminal_names()
+            Retrieved 20 terminal names for MultiTree 'TreeName'
+
+        Attributes:
+            trees (list): A list of tree objects containing terminal (leaf) names.
+            _log_info (function): A method that logs informational messages.
+            name (str): The name of the MultiTree instance.
+
+        """
+        names = sorted({name for tree in self.trees for name in tree.terminal_names()})
+        self._log_info(f"Retrieved {len(names)} terminal names for {self.name}")
+        return names
+    ################################################################################################
+    def common_terminals(self) -> List[str]:
+        """
+        Return sorted terminal names common to all trees.
+
+        This function retrieves terminal (leaf) names that are common to all trees
+        in the MultiTree instance. It sorts these common terminal names in alphabetical
+        order and logs the retrieval action.
+
+        Returns:
+            List[str]: A sorted list of terminal names common to all trees.
+
+        Example:
+            >>> obj = MultiTree()
+            >>> common_names = obj.common_terminals()
+            15 common terminal names retrieved for MultiTree 'TreeName'
+
+        Attributes:
+            trees (list): A list of tree objects containing terminal (leaf) names.
+            _log_info (function): A method that logs informational messages.
+            name (str): The name of the MultiTree instance.
+
+        """
+        if not self.trees:
+            return []
         
-        # Extract and set parameters for embedding
-        accurate = kwargs.get('accurate', conf.ENABLE_ACCURATE_OPTIMIZATION)
-        total_epochs = kwargs.get('total_epochs', conf.TOTAL_EPOCHS)
-        initial_lr = kwargs.get('initial_lr', conf.INITIAL_LEARNING_RATE)
-        max_diameter = kwargs.get('max_diameter', conf.MAX_RANGE)
-        enable_save = kwargs.get('enable_save', conf.ENABLE_SAVE_MODE)
-        learning_rate = kwargs.get('learning_rate', None)
-        scale_learning = kwargs.get('scale_learning', None)
-        weight_exponent = kwargs.get('weight_exponent', None)
+        common = set(self.trees[0].terminal_names())
+        for tree in self.trees[1:]:
+            common.intersection_update(tree.terminal_names())
+        
+        self._log_info(f"{len(common)} common terminal names retrieved for {self.name}")
+        return sorted(common)
+    ################################################################################################
+    def distance_matrix(self, method: str = "agg", func: Callable[[torch.Tensor], torch.Tensor] = torch.nanmean, max_iter: int = 1000) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Compute the distance matrix for terminal names across all trees.
 
-        if geometry == 'hyperbolic':
-            try:
-                # Constants and initial setup
-                diameters = []
-                distance_matrices = []
-                for tree in self.trees:
-                    diameters.append(tree.diameter())
-                diameters = torch.tensor(diameters)
+        This function calculates the distance matrix for terminal (leaf) names across all 
+        trees in the MultiTree instance. It supports different aggregation methods and 
+        functions for distance computation. The function logs the computation progress 
+        and returns the distance matrix, confidence scores, and terminal labels.
 
-                scale_factor = max_diameter / torch.max(diameters)
-                initial_curvature = -(scale_factor ** 2)
-                distance_matrices = {}
+        Args:
+            method (str): The method for distance computation, e.g., "agg" or "fp" (fixed point).
+                          Defaults to "agg".
+            func (Callable): A function to aggregate distances, e.g., `torch.nanmean`.
+                             Defaults to `torch.nanmean`.
+            max_iter (int): The maximum number of iterations for fixed point computation.
+                            Defaults to 1000.
 
-                # Naive hyperbolic embedding
-                multi_embeddings = embedding.MultiEmbedding()
-                for name, tree in enumerate(self.trees):
-                    self._log_info(f"Initiating naive embedding of {name} in hyperbolic space.")
-                    # print(tree.distance_matrix(),scale_factor)
-                    distance_matrix = tree.distance_matrix() * scale_factor
-                    distance_matrices[name] = distance_matrix
-                    n = distance_matrix.size(0)
-                    gramian = -torch.cosh(distance_matrix)
-                    points = utils.lgram_to_points(gramian, dimension).detach()
-                    points= points.double()
-                    for n in range(points.size(1)):
-                        points[:,n] = utils.project_to_hyperbolic_space(points[:,n])
-                        points[0,n] = torch.sqrt(1+torch.sum(points[1:,n]**2))
+        Returns:
+            Tuple[torch.Tensor, Optional[torch.Tensor], List[str]]: The distance matrix, 
+                                                                   confidence scores, and 
+                                                                   terminal labels.
 
-                    # Initialize Loid embedding
-                    multi_embeddings.add_embedding(embedding.LoidEmbedding( points      = points, 
-                                                                            labels      = tree.terminal_names(), 
-                                                                            curvature   = initial_curvature))
-                    self._log_info(f"Naive hyperbolic embedding of {name} is completed.")
-                # Precise hyperbolic embedding
-                if accurate:
-                    initial_tangents = {}
-                    self._log_info("Initiating precise hyperbolic embedding.")
-                    for name, tree in enumerate(self.trees):
-                        initial_tangents[name] =  utils.hyperbolic_log(multi_embeddings.embeddings[name].points)
+        Raises:
+            ValueError: If no trees are available for distance computation.
+            Exception: If an error occurs during distance matrix computation.
 
-                    tangents_dic, consensus_scale = utils.hyperbolic_embedding_consensus(distance_matrices,
-                                                                                         dimension,
-                                                                                         initial_tangents   = initial_tangents,
-                                                                                         total_epochs       = total_epochs,
-                                                                                         log_function       = self._log_info,
-                                                                                         learning_rate      = learning_rate,
-                                                                                         scale_learning     = scale_learning,
-                                                                                         weight_exponent    = weight_exponent,
-                                                                                         initial_lr         = initial_lr,
-                                                                                         enable_save        = enable_save,
-                                                                                         time               = self._current_time
-                                                                                         )
-                    for name, tree in enumerate(self.trees):
-                        multi_embeddings.embeddings[name].points    = utils.hyperbolic_exponential(tangents_dic[name])
-                        multi_embeddings.embeddings[name].curvature = (multi_embeddings.embeddings[name].curvature)*consensus_scale
-                    self._log_info("Precise hyperbolic embedding completed.")
-            except ValueError as ve:
-                self._log_info(f"Value error during hyperbolic embedding: {ve}")
-                raise
-            except RuntimeError as re:
-                self._log_info(f"Runtime error during hyperbolic embedding: {re}")
-                raise
-            except Exception as e:
-                self._log_info(f"Unexpected error during hyperbolic embedding: {e}")
-                raise
-        else:
-            try:
-                distance_matrices = {}
-                # Naive hyperbolic embedding
+        Example:
+            >>> obj = MultiTree()
+            >>> dist_mat, conf, labels = obj.distance_matrix()
+            Distance matrix computation complete.
+
+        Attributes:
+            trees (list): A list of tree objects to be analyzed.
+            _log_info (function): A method that logs informational messages.
+            name (str): The name of the MultiTree instance.
+
+        """
+        if not self.trees:
+            self._log_info("No trees available for distance computation.")
+            raise ValueError("No trees available for distance computation.")
+        
+        labels = self.terminal_names()
+        n, m = len(labels), len(self.trees)
+        dist_mats = torch.full((m, n, n), float('nan'))
+        
+        for i, tree in enumerate(self.trees):
+            idx = torch.tensor([labels.index(lbl) for lbl in tree.terminal_names()])
+            mat = torch.full((n, n), float('nan'))
+            mat[idx[:, None], idx] = tree.distance_matrix()[0]
+            mat.fill_diagonal_(0)
+            dist_mats[i] = mat
+
+        valid_mask = ~torch.isnan(dist_mats)
+        conf = valid_mask.float().mean(dim=0)
+        sigma = 3
+
+        if method == "fp":
+            def gaussian_similarity(x1: torch.Tensor, x2: torch.Tensor, s: float) -> torch.Tensor:
+                return torch.exp( - s * torch.norm(x1 - x2)**2 / torch.norm(x1)**2 )
+
+            valid_counts = valid_mask.sum(dim=0).clamp(min=1)
+            avg_mat = self.distance_matrix(func=func)[0]
+            prev_w = torch.zeros(m, device=dist_mats.device)
+            progress = tqdm(total=max_iter, desc="Fixed Point", unit="iter")
+
+            for epoch in range(max_iter):
+                sigma_epoch = min(2 * sigma *  epoch / max_iter, sigma)
+                similarities = torch.stack([
+                    gaussian_similarity(avg_mat[valid_mask[i]].flatten(), dist_mats[i][valid_mask[i]].flatten(),sigma_epoch)
+                    if (valid_mask[i]).any() else torch.tensor(0, device=dist_mats.device)
+                    for i in range(m)
+                ])
+                w = similarities / similarities.sum()
+                W = torch.where(valid_mask, w.view(-1, 1, 1),torch.zeros_like(dist_mats))
+                W /= W.sum(dim=0, keepdim=True)
+                W *= valid_counts[None, :, :]
+                avg_mat = torch.nansum(W * dist_mats, dim=0) / valid_counts
+                if torch.sqrt(m*torch.norm(w - prev_w)**2) < 10**(-10):
+                    break
+                prev_w = w.clone()
+                progress.update(1)
+            progress.close()
+            return avg_mat, conf, labels
+
+        avg_mat = func(dist_mats, dim=0)[0] if isinstance(func(dist_mats, dim=0), tuple) else func(dist_mats, dim=0)
+        nan_mask = torch.isnan(avg_mat)
+        for i, j in torch.nonzero(avg_mat, as_tuple=False):
+            non_nan_vals = torch.cat([
+                avg_mat[i, ~torch.isnan(avg_mat[i, :])], 
+                avg_mat[~torch.isnan(avg_mat[:, j]), j]
+            ])
+            if non_nan_vals.numel() > 0:
+                avg_mat[i, j] = func(non_nan_vals)
+
+        self._log_info("Distance matrix computation complete.")
+        return avg_mat, conf, labels
+    ################################################################################################
+    def normalize(self, batch_mode=False):
+        """
+        Normalize the edge lengths of the trees in the MultiTree object.
+
+        This function normalizes the edge lengths of the trees based on their distance matrices.
+        It can operate in batch mode to process trees in batches for efficiency.
+
+        Parameters
+        ----------
+        batch_mode : bool, optional
+            If True, the function operates in batch mode, processing trees in batches for efficiency.
+            The default is False.
+
+        Returns
+        -------
+        torch.Tensor
+            A tensor containing the scales used for normalization of each tree.
+
+        Notes
+        -----
+        The function performs the following steps:
+        1. Precomputes distance matrices for all trees.
+        2. Handles NaN values in the distance matrices and calculates valid counts.
+        3. Initializes the scales tensor for all trees.
+        4. Iteratively optimizes the scales in batches or for all trees depending on the batch_mode.
+        5. Updates the edge lengths of the trees by scaling them.
+
+        Example
+        -------
+        >>> multi_tree = MultiTree(trees)
+        >>> scales = multi_tree.normalize(batch_mode=True)
+        >>> print(scales)
+
+        """
+        labels = self.terminal_names()
+        n, m = len(labels), len(self.trees)
+        log_lr_range = (-np.log10(n) + 1, -np.log10(n)) if batch_mode else (-np.log10(n) - 1, -np.log10(n))
+        max_iters = 10 * int(np.sqrt(n) + 1) if batch_mode else 10 * n
+        num_passes = int(n / np.sqrt(n) + 1) if batch_mode else 1
+        batch_size = int(np.sqrt(m) + 1) if batch_mode else m
+
+        # Precompute distance matrices
+        dist_mats = torch.full((m, n, n), float('nan'))
+        for i, tree in enumerate(self.trees):
+            idx = torch.tensor([labels.index(lbl) for lbl in tree.terminal_names()])
+            mat = torch.full((n, n), float('nan'))
+            mat[idx[:, None], idx] = tree.distance_matrix()[0]
+            mat.fill_diagonal_(0)
+            dist_mats[i] = mat
+
+        nan_mask = torch.isnan(dist_mats)
+        valid_counts = nan_mask.logical_not().sum(dim=0).clamp(min=1)
+        dist_mats = torch.nan_to_num(dist_mats, nan=0.0)
+        scales = torch.ones(m, dtype=torch.float32)
+        total_iters = num_passes * max_iters * len(range(0, m, batch_size)) + (max_iters if batch_mode else 0)
+        progress = tqdm(total=total_iters, desc="Normalizing", unit="iter")
+
+        def optimize_scales(batch_indices, remaining_weighted, batch_nan_mask, batch_dist_mats):
+            sum_x = scales[batch_indices].sum()
+            x = scales[batch_indices].clone().requires_grad_(True)
+            opt = Adam([x], lr=10 ** log_lr_range[0])
+
+            for i in range(max_iters):
+                lr = 10 ** (log_lr_range[0] + (log_lr_range[1] - log_lr_range[0]) * (i / max_iters))
+                opt.param_groups[0]['lr'] = lr
                 
-                multi_embeddings = embedding.MultiEmbedding()
-                for name, tree in enumerate(self.trees):
-                    self._log_info(f"Initiating naive embedding of {name} in hyperbolic space.")
-                    distance_matrix = tree.distance_matrix()
-                    distance_matrices[name] = distance_matrix
-                    n = distance_matrix.size(0)
-
-                    # Step 1: Convert the distance matrix to a Gram matrix using double centering
-                    J = torch.eye(n) - torch.ones((n, n)) / n
-                    gramian = -0.5 * J @ distance_matrix @ J
-                    # Step 2: Perform eigen decomposition on the Gram matrix
-                    eigenvalues, eigenvectors = torch.linalg.eigh(gramian)
-                    # Step 3: Sort eigenvalues and eigenvectors in descending order
-                    sorted_indices = torch.argsort(eigenvalues, descending=True)
-                    eigenvalues = eigenvalues[sorted_indices]
-                    eigenvectors = eigenvectors[:, sorted_indices]
-                    # Step 4: Select the top "dimension" eigenvalues and corresponding eigenvectors
-                    top_eigenvalues = eigenvalues[:min(dimension, n)].clamp(min=0)  # Clamp to ensure non-negative
-                    top_eigenvectors = eigenvectors[:, :min(dimension, n)]
-                    # Step 5: Compute the coordinates in d-dimensional space
-                    points = top_eigenvectors * torch.sqrt(top_eigenvalues).unsqueeze(0)
-                    points = points.t()
-                    points = points.double()
-                    if dimension > n:
-                        zeros_to_append = torch.zeros((dimension - n, points.size(1)), dtype=points.dtype)
-                        points = torch.cat((points, zeros_to_append), dim=0)
-                    self._log_info(f"Naive hyperbolic embedding of {name} is completed.")
-                    
-                    # Precise hyperbolic embedding
-                    if accurate:    
-                        self._log_info("Initiating precise euclidean embedding.")
-                        points = utils.euclidean_embedding(distance_matrix,
-                                                           dimension,
-                                                           initial_points   = points,
-                                                           total_epochs     = total_epochs,
-                                                           log_function     = self._log_info,
-                                                           learning_rate    = learning_rate,
-                                                           weight_exponent  = weight_exponent,
-                                                           initial_lr       = initial_lr,
-                                                           enable_save      = enable_save,
-                                                           time             = self._current_time
-                                                           )
-                        self._log_info(f"Precise euclidean embedding of {name} is completed.")
-                    multi_embeddings.add_embedding(embedding.EuclideanEmbedding(points=points,labels=tree.terminal_names()))
-            except ValueError as ve:
-                self._log_info(f"Value error during euclidean embedding: {ve}")
-                raise
-            except RuntimeError as re:
-                self._log_info(f"Runtime error during euclidean embedding: {re}")
-                raise
-            except Exception as e:
-                self._log_info(f"Unexpected error during euclidean embedding: {e}")
-                raise
+                x_norm = torch.nn.functional.softplus(x)
+                x_norm = (x_norm / x_norm.sum()) * sum_x
+                weighted = batch_dist_mats * x_norm[:, None, None]
+                avg_mat = (weighted.sum(dim=0) + remaining_weighted) / valid_counts
+                loss = ((weighted - avg_mat.unsqueeze(0)) * (~batch_nan_mask)).norm(dim=(1, 2), p='fro').pow(2).sum() / (len(batch_indices) * n**2)
                 
-        directory = f'{conf.OUTPUT_DIRECTORY}/{self._current_time}'
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+                progress.update(1)
+                self._log_info(f"Iter {i}: Loss={loss.item():.6f} | LR={lr:.2e}")
+            
+            scales[batch_indices] = x_norm.detach()
+            return avg_mat
+
+        for pass_idx in range(num_passes):
+            indices = list(range(m))
+            if batch_mode:
+                random.shuffle(indices)
+            for batch_start in range(0, m, batch_size):
+                batch_indices = indices[batch_start:batch_start + batch_size]
+                remaining_indices = list(set(indices) - set(batch_indices))
+                remaining_weighted = (dist_mats[remaining_indices] * scales[remaining_indices, None, None]).sum(dim=0)
+                batch_dist_mats, batch_nan_mask = dist_mats[batch_indices], nan_mask[batch_indices]
+                avg_mat = optimize_scales(batch_indices, remaining_weighted, batch_nan_mask, batch_dist_mats)
+
+        if batch_mode:
+            avg_mat = optimize_scales(range(m), 0, nan_mask, dist_mats)
+        scales = [scales[i].item() for i in range(m)]
+        for i, tree in enumerate(self.trees):
+            factor = scales[i]
+            for node in tree.contents.traverse_postorder():
+                if node.get_edge_length() is not None:
+                    node.set_edge_length(node.get_edge_length() * factor)
+
+        progress.close()
+        return scales
+    ################################################################################################
+    def embed(self, dim: int, geometry: str = 'hyperbolic', **kwargs) -> 'MultiEmbedding':
+        """
+        Embeds multiple trees into the specified geometric space (hyperbolic or Euclidean).
+
+        Parameters:
+        -----------
+        dim : int
+            The dimension of the embedding space. Must be provided.
+            
+        geometry : str, optional
+            The geometric space to use for the embedding. Can be 'hyperbolic' or 'euclidean'.
+            Default is 'hyperbolic'.
+            
+        **kwargs : dict, optional
+            Additional parameters for the embedding process. Includes:
+            - precise_opt (bool): Enable accurate optimization. Default is set in conf.
+            - epochs (int): Total number of training epochs. Default is set in conf.
+            - lr_init (float): Initial learning rate. Default is set in conf.
+            - dist_cutoff (float): Maximum distance cutoff. Default is set in conf.
+            - save_mode (bool): Enable save mode. Default is set in conf.
+            - scale_fn (callable): Scaling function to use. Default is None.
+            - lr_fn (callable): Learning rate function to use. Default is None.
+            - weight_exp_fn (callable): Weight exponent function to use. Default is None.
+            - normalize (bool): Whether to normalize the embeddings. Default is False.
+
+        Returns:
+        --------
+        MultiEmbedding
+            An object containing the multiple embeddings generated.
+
+        Raises:
+        -------
+        ValueError
+            If the 'dim' parameter is not provided.
+
+        RuntimeError
+            For errors encountered during the embedding process.
+        
+        Example:
+        --------
+        To embed multiple trees in 3-dimensional hyperbolic space:
+        
+        >>> multi_embedding = obj.embed(dim=3, geometry='hyperbolic', epochs=100, lr_init=0.01)
+        
+        The results will be saved with the geometry included in the filename:
+        '{output_directory}/hyperbolic_embedding_3d_space.pkl'
+        
+        Notes:
+        ------
+        - The method automatically saves the resulting embeddings to a file, with the geometry and dimension 
+          included in the filename for clarity.
+        - Users can adjust the various parameters by passing them as keyword arguments.
+        - If normalization is required, set 'normalize' to True.
+        """
+        if dim is None:
+            raise ValueError("The 'dimension' parameter is required.")
+
+        # Extract and set embedding parameters
+        params = {  
+            key: kwargs.get(key, default) for key, default in {
+                'precise_opt': conf.ENABLE_ACCURATE_OPTIMIZATION,
+                'epochs': conf.TOTAL_EPOCHS,
+                'lr_init': conf.INITIAL_LEARNING_RATE,
+                'dist_cutoff': conf.MAX_RANGE,
+                'save_mode': conf.ENABLE_SAVE_MODE,
+                'scale_fn': None,
+                'lr_fn': None,
+                'weight_exp_fn': None,
+                'normalize': True
+            }.items()
+        }
+
+        if params['normalize']:
+            self.normalize(batch_mode = params['precise_opt'])
+
+        try:
+            multi_embeddings = (self._embed_hyperbolic if geometry == 'hyperbolic' else self._embed_euclidean)(dim, **params)
+        except Exception as e:
+            self._log_info(f"Error during multi_embedding: {e}")
+            raise
+
+        directory = f"{conf.OUTPUT_DIRECTORY}/{self._current_time.strftime('%Y-%m-%d_%H-%M-%S')}"
+        filepath = f"{directory}/{geometry}_multiembedding_{dim}d.pkl"
         os.makedirs(directory, exist_ok=True)
-        filename = f'{geometry}_spaces.pkl'
-        filepath = f'{directory}/{filename}'
         try:
             with open(filepath, 'wb') as file:
                 pickle.dump(multi_embeddings, file)
             self._log_info(f"Object successfully saved to {filepath}")
-        except IOError as ioe:
-            self._log_info(f"IO error while saving the object: {ioe}")
+        except (IOError, pickle.PicklingError, Exception) as e:
+            self._log_info(f"Error while saving object: {e}")
             raise
-        except pickle.PicklingError as pe:
-            self._log_info(f"Pickling error while saving the object: {pe}")
-            raise
-        except Exception as e:
-            self._log_info(f"Unexpected error while saving the object: {e}")
-            raise
-        
+
         return multi_embeddings
+    ################################################################################################
+    def _embed_euclidean(self, dim: int, **params) -> 'MultiEmbedding':
+        """
+        Handle naive and precise Euclidean embeddings.
+        """
+        self._log_info("Starting the Euclidean embedding process.")
+        multi_embeddings = embedding.MultiEmbedding()
+        progress = tqdm(total=len(self.trees), desc="Embedding", unit="tree")
+        for index, tree in enumerate(self.trees):
+            self._log_info(f"Processing tree {index + 1}/{len(self.trees)}: {tree.name}")
+            multi_embeddings.append(tree._embed_euclidean(dim, **params))
+            self._log_info(f"Euclidean embedding completed for {tree.name}.")
+            progress.update(1)
+        progress.close()
+        self._log_info("Euclidean embedding process completed for all trees.")
+        return multi_embeddings
+    ################################################################################################
+    def _embed_hyperbolic(self, dim: int, **params) -> 'MultiEmbedding':
+        """
+        Handle naive and precise Hyperbolic embeddings.
+        """
+        self._log_info("Starting the Hyperbolic embedding process.")
+        scale_factor = params['dist_cutoff'] / self.distance_matrix()[0].max()
+        multi_embeddings = embedding.MultiEmbedding()
+        progress = tqdm(total=len(self.trees), desc="Naive Embedding", unit="tree")
+        dist_mats = []
+        for index, tree in enumerate(self.trees):
+            dist_mats.append(tree.distance_matrix()[0])
+
+        for index, tree in enumerate(self.trees):
+            self._log_info(f"Processing tree {index + 1}/{len(self.trees)}: {tree.name}")
+            points = tree._naive_hyperbolic_embedding(tree.distance_matrix()[0]*scale_factor, dim)
+            multi_embeddings.append(embedding.LoidEmbedding(points=points, labels=tree.terminal_names(), curvature=-(scale_factor ** 2)))
+            self._log_info(f"Naive Hyperbolic embedding completed for {tree.name}.")
+            progress.update(1)
+        progress.close()
+
+        self._log_info("Hyperbolic embedding (naive) process completed for all trees.")
+        if params['precise_opt']:
+            self._log_info("Refining embeddings with precise optimization.")
+            pts_list, curvature = utils._precise_hyperbolic_multiembedding(dist_mats, multi_embeddings,log_fn=self._log_info, time_stamp=self._current_time, **params)
+            multi_embeddings = embedding.MultiEmbedding()
+            for index, tree in enumerate(self.trees):
+                multi_embeddings.append(embedding.LoidEmbedding(points=pts_list[index], labels=tree.terminal_names(), curvature=curvature))
+            self._log_info("Precise hyperbolic embedding process completed for all trees.")
+        return multi_embeddings
+    ################################################################################################

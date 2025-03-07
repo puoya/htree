@@ -6,13 +6,17 @@ import os
 import copy
 from typing import Optional, Union, List,Callable
 from datetime import datetime
+import scipy.sparse.linalg as spla
+
 from . import conf, utils, embedding, procrustes
+from .logger import get_logger, logging_enabled, get_time
 
 # import conf
 # import utils
-# import embedding
 # import procrustes
+# from logger import get_logger, logging_enabled, get_time
 
+################################################################################################
 class Embedding:
     """
     A class representing an abstract embedding.
@@ -21,14 +25,12 @@ class Embedding:
         geometry (str): The geometry of the space (e.g., 'euclidean', 'hyperbolic').
         points (torch.Tensor): A PyTorch tensor representing the points in the space.
         labels (list): A list of labels corresponding to the points in the space.
-        _logger (logging.Logger): A logger for the class if logging is enabled.
     """
-    
+
     def __init__(self, 
                  geometry: Optional[str] = 'hyperbolic', 
                  points: Optional[Union[np.ndarray, torch.Tensor]] = None, 
-                 labels: Optional[List[Union[str, int]]] = None,
-                 enable_logging: bool = False):
+                 labels: Optional[List[Union[str, int]]] = None):
         """
         Initializes the Embedding.
 
@@ -36,38 +38,31 @@ class Embedding:
             geometry (str): The geometry of the space. Default is 'hyperbolic'.
             points (Optional[Union[np.ndarray, torch.Tensor]]): A NumPy array or PyTorch tensor of points. Default is None.
             labels (Optional[List[Union[str, int]]]): A list of labels corresponding to the points. Default is None.
-            enable_logging (bool): If True, logging is enabled. Default is False.
         """
-        self._logger = None
-        self._current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-        if enable_logging:
-            self._setup_logging()
+        self._current_time = get_time() or datetime.now()  # Uses a global timestamp function
+        if geometry not in {'euclidean', 'hyperbolic'}:
+            self._log_info("Invalid geometry type: %s", geometry)
+            raise ValueError("Invalid geometry type. Choose either 'euclidean' or 'hyperbolic'.")
 
         if geometry not in {'euclidean', 'hyperbolic'}:
-            if self._logger:
-                self._logger.error("Invalid geometry type: %s", geometry)
+            self._log_info(f"Invalid geometry type: {geometry}")
             raise ValueError("Invalid geometry type. Choose either 'euclidean' or 'hyperbolic'.")
-        
+
         self._geometry = geometry
         self._points = self._convert_value(points) if points is not None else torch.empty((0, 0))
         self._labels = labels if labels is not None else list(range(self._points.shape[1]))
         self._log_info(f"Initialized Embedding with geometry={self._geometry}")
-
-    def _setup_logging(self, log_dir: str = conf.LOG_DIRECTORY, log_level: int = logging.INFO, log_format: str = '%(asctime)s - %(levelname)s - %(message)s') -> None:
+    ################################################################################################
+    def _log_info(self, message: str) -> None:
         """
-        Set up logging configuration.
+        Logs an informational message.
 
         Args:
-            log_dir (str): Directory where log files will be saved. Default is conf.LOG_DIRECTORY.
-            log_level (int): Logging level. Default is logging.INFO.
-            log_format (str): Format for logging messages. Default is '%(asctime)s - %(levelname)s - %(message)s'.
+            message (str): The message to log.
         """
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"Embedding_{self._current_time}.log")
-        logging.basicConfig(filename=log_file, level=log_level, format=log_format)
-        self._logger = logging.getLogger(__name__)
-        self._log_info("Logging setup complete.")
-
+        if logging_enabled():  # Check if logging is globally enabled
+            get_logger().info(message)
+    ################################################################################################
     def _convert_value(self, value: Union[np.ndarray, torch.Tensor, list, int, float]) -> torch.Tensor:
         """
         Converts the points to a PyTorch tensor with double precision.
@@ -78,41 +73,24 @@ class Embedding:
         Returns:
             torch.Tensor: The converted points with double precision.
         """
-        if isinstance(value, list):
-            # Convert list to a torch.Tensor with double precision
-            value = torch.tensor(value, dtype=torch.float64)
-        elif isinstance(value, np.ndarray):
-            # Convert NumPy array to a torch.Tensor with double precision
-            value = torch.tensor(value, dtype=torch.float64)
-        elif isinstance(value, torch.Tensor):
-            # Ensure PyTorch tensor is in double precision
-            value = value.to(dtype=torch.float64, non_blocking=True)
-        elif isinstance(value, (int, float)):
-            # Convert single scalar to a torch.Tensor with double precision
-            value = torch.tensor(value, dtype=torch.float64)
-        else:
-            if self._logger:
-                self._logger.error("Points must be a list, scalar, NumPy array, or PyTorch tensor, got: %s", type(value))
+        if not isinstance(value, (list, np.ndarray, torch.Tensor, int, float)):
+            if logging_enabled():
+                self._log_info("Points must be a list, scalar, NumPy array, or PyTorch tensor, got: %s", type(value))
             raise TypeError("Points must be a list, scalar, NumPy array, or PyTorch tensor")
 
-        return value
-            
-
-    def _log_info(self, message: str) -> None:
-        """
-        Log an informational message.
-
-        Args:
-            message (str): The message to log.
-        """
-        if self._logger:
-            self._logger.info(message)
-
+        if isinstance(value, list):  # Convert lists to NumPy array first
+            value = np.array(value, dtype=np.float64)
+        if isinstance(value, np.ndarray):
+            return torch.tensor(value, dtype=torch.float64)
+        elif isinstance(value, torch.Tensor):
+            return value.to(dtype=torch.float64)
+        return torch.tensor(value, dtype=torch.float64)
+    ################################################################################################
     @property
     def geometry(self) -> str:
         """Gets the geometry of the space."""
         return self._geometry   
-    
+    ################################################################################################
     @property
     def points(self) -> torch.Tensor:
         """
@@ -122,7 +100,7 @@ class Embedding:
             torch.Tensor: The points in the space.
         """
         return self._points
-
+    ################################################################################################
     @points.setter
     def points(self, value: Union[np.ndarray, torch.Tensor]) -> None:
         """
@@ -134,17 +112,26 @@ class Embedding:
         Raises:
             ValueError: If the norm constraints are violated by the new points.
         """
-        self._points = self._convert_value(value)
+        if isinstance(value, np.ndarray):  # If NumPy array, convert it
+            value = torch.tensor(value, dtype=torch.float64)
+        elif isinstance(value, list):  # If list, convert to NumPy first, then Tensor
+            value = torch.tensor(np.array(value, dtype=np.float64), dtype=torch.float64)
+        elif isinstance(value, torch.Tensor):  # If Tensor, enforce dtype
+            value = value.to(dtype=torch.float64)
+        else:  # Scalars (int, float)
+            value = torch.tensor(value, dtype=torch.float64)
+
+        self._points = value  # Store as torch.Tensor
         self._update_dimensions()
         if self.geometry == 'hyperbolic':
             self._validate_norms() 
         self._log_info(f"Updated points with shape={self._points.shape}")
-
+    ################################################################################################
     @property
     def labels(self) -> List[Union[str, int]]:
         """Gets the labels corresponding to the points."""
         return self._labels
-    
+    ################################################################################################
     @labels.setter
     def labels(self, value: List[Union[str, int]]) -> None:
         """
@@ -157,20 +144,19 @@ class Embedding:
             ValueError: If the number of labels does not match the number of points.
         """
         if len(value) != self._points.shape[1]:
-            if self._logger:
-                self._logger.error("The number of labels must match the number of points, got: %d labels for %d points", len(value), self._points.shape[1])
+            self._log_info(f"The number of labels must match the number of points, got: {len(value)} labels for {self._points.shape[1]} points")
             raise ValueError("The number of labels must match the number of points")
         self._labels = value
         self._log_info(f"Updated labels with length={len(self._labels)}")
-
+    ################################################################################################
     def _update_dimensions(self) -> None:
         """Updates the dimension based on the points. Must be implemented by a subclass."""
         raise NotImplementedError("update_dimensions must be implemented by a subclass")
-
+    ################################################################################################
     def _validate_norms(self) -> None:
         """Validates that all points are within the norm constraints for the embedding."""
         raise NotImplementedError("_validate_norms must be implemented by a subclass")
-
+    ################################################################################################
     def distance_matrix(self) -> torch.Tensor:
         """
         Computes the distance matrix for points in the embedding space.
@@ -179,8 +165,7 @@ class Embedding:
             NotImplementedError: This method must be implemented by a subclass.
         """
         raise NotImplementedError("distance_matrix must be implemented by a subclass")
-
-    
+    ################################################################################################
     def save(self, filename: str) -> None:
         """
         Saves the Embedding instance to a file using pickle.
@@ -196,10 +181,9 @@ class Embedding:
                 pickle.dump(self, file)
                 self._log_info(f"Saved Embedding to {filename}")
         except Exception as e:
-            if self._logger:
-                self._logger.error("Failed to save Embedding: %s", e)
+            self._log_info("Failed to save Embedding: %s", e)
             raise
-    
+    ################################################################################################
     @staticmethod
     def load(filename: str) -> 'Embedding':
         """
@@ -221,9 +205,9 @@ class Embedding:
                 instance._log_info(f"Loaded Embedding from {filename}")
             return instance
         except Exception as e:
-            logging.error("Failed to load Embedding: %s", e)
+            self._log_info(f"Failed to load Embedding: {e}")
             raise
-
+    ################################################################################################
     def copy(self) -> 'Embedding':
         """
         Create a deep copy of the Embedding object.
@@ -232,12 +216,10 @@ class Embedding:
         Embedding_copy = copy.deepcopy(self)
         self._log_info(f"Embedding copied successfully.")
         return Embedding_copy
-
+    ################################################################################################
     def __repr__(self) -> str:
         """Returns a string representation of the Embedding."""
         return (f"Embedding(geometry={self._geometry}, points_shape={list(self._points.shape)})")
-####################################################################################################
-####################################################################################################
 ####################################################################################################
 class HyperbolicEmbedding(Embedding):
     """
@@ -252,10 +234,9 @@ class HyperbolicEmbedding(Embedding):
     def __init__(
         self,
         curvature: Optional[float] = -1,
-        model: Optional[str] = 'poincare',
+        model: Optional[str] = 'loid',
         points: Optional[Union[np.ndarray, torch.Tensor]] = None,
-        labels: Optional[List[Union[str, int]]] = None,
-        enable_logging: bool = False
+        labels: Optional[List[Union[str, int]]] = None
     ):
         """
         Initializes the HyperbolicEmbedding.
@@ -265,7 +246,6 @@ class HyperbolicEmbedding(Embedding):
             model (Optional[str]): The model of the space ('poincare' or 'loid'). Default is 'poincare'.
             points (Optional[Union[np.ndarray, torch.Tensor]]): A NumPy array or PyTorch tensor of points. Default is None.
             labels (Optional[List[Union[str, int]]]): A list of labels corresponding to the points. Default is None.
-            enable_logging (bool): If True, logging is enabled. Default is False.
 
         Raises:
             ValueError: If the curvature is not negative.
@@ -273,16 +253,16 @@ class HyperbolicEmbedding(Embedding):
         if curvature >= 0:
             raise ValueError("Curvature must be negative for hyperbolic space.")
 
-        super().__init__(geometry='hyperbolic', points=points, labels=labels, enable_logging=enable_logging)
+        super().__init__(geometry='hyperbolic', points=points, labels=labels)
         self._curvature = self._convert_value(curvature)
         self.model = model
-        self._log_info(f"Initialized HyperbolicEmbedding with curvature={self._curvature} and model={self.model}")
-
+        self._log_info(f"Initialized HyperbolicEmbedding with curvature={self._curvature}")
+    ################################################################################################
     @property
     def curvature(self) -> torch.Tensor:
         """Gets the curvature of the space."""
         return self._curvature
-
+    ################################################################################################
     @curvature.setter
     def curvature(self, value: float) -> None:
         """Sets the curvature of the space.
@@ -292,7 +272,7 @@ class HyperbolicEmbedding(Embedding):
         """
         self._curvature = self._convert_value(value) 
         self._log_info(f"Updated curvature to {self._curvature}")
-
+    ################################################################################################
     def switch_model(self) -> 'HyperbolicEmbedding':
         """
         Switches between Poincare and Loid models.
@@ -303,31 +283,29 @@ class HyperbolicEmbedding(Embedding):
         Raises:
             ValueError: If there are no points to switch model.
         """
-        if self._points.numel() == 0:
+        if not self._points.numel():
             raise ValueError("No points to switch model.")
 
         self._log_info(f"Switching model from {self.model}")
 
         if self.model == 'poincare':
             norm_points = torch.norm(self._points, dim=0)
-            new_points = torch.zeros((self._points.shape[0] + 1, self._points.shape[1]))
-            new_points[0] = (1 + norm_points**2) / (1 - norm_points**2)
-            new_points[1:] = (2 * self._points) / (1 - norm_points**2)
-            new_space = LoidEmbedding(curvature=self._curvature, points=new_points, labels = self.labels, enable_logging=self._logger is not None)
+            new_points = torch.cat((
+                (1 + norm_points**2) / (1 - norm_points**2).unsqueeze(0),
+                (2 * self._points) / (1 - norm_points**2)
+            ), dim=0)
+            new_space = LoidEmbedding(self._curvature, new_points, self.labels)
             self._log_info("Switched to LoidEmbedding model.")
-            return new_space
         elif self.model == 'loid':
-            x1 = self._points[0]
-            bar_x = self._points[1:]
-            new_points = bar_x / (x1 + 1)
-            new_space = PoincareEmbedding(curvature=self._curvature, points=new_points, labels = self.labels, enable_logging=self._logger is not None)
+            new_points = self._points[1:] / (self._points[0] + 1)
+            new_space = PoincareEmbedding(self._curvature, new_points, self.labels)
             self._log_info("Switched to PoincareEmbedding model.")
-            return new_space
         else:
-            if self._logger:
-                self._logger.error("Unknown model type: %s", self.model)
+            if logging_enabled():
+                self._log_info(f"Unknown model type: {self.model}")
             raise ValueError("Unknown model type.")
-
+        return new_space
+    ################################################################################################
     def poincare_distance(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         """
         Compute the Poincare distance between points x and y.
@@ -345,8 +323,7 @@ class HyperbolicEmbedding(Embedding):
         denominator = (1 - norm_x) * (1 - norm_y)
         distance = torch.acosh(1 + 2 * diff_norm / denominator)
         return distance
-
-    
+    ################################################################################################
     def to_poincare(self, vectors: Union[np.ndarray, torch.Tensor]) -> torch.Tensor:
         """
         Transforms vectors from Loid to Poincare model.
@@ -360,7 +337,6 @@ class HyperbolicEmbedding(Embedding):
         Raises:
             TypeError: If input vectors are not a NumPy array or a PyTorch tensor.
         """
-
         if isinstance(vectors, (np.ndarray, torch.Tensor)):
             vectors = torch.tensor(vectors, dtype=self._points.dtype) if isinstance(vectors, np.ndarray) else vectors.to(dtype=self._points.dtype, non_blocking=True)
         else:
@@ -370,7 +346,7 @@ class HyperbolicEmbedding(Embedding):
             vectors = vectors.unsqueeze(1)
         new_points = vectors[1:, :] / (1 + vectors[0, :])
         return new_points
-
+    ################################################################################################
     def to_loid(self, vectors: Union[np.ndarray, torch.Tensor]) -> torch.Tensor:
         """
         Transforms vectors from Poincare to Loid model.
@@ -397,7 +373,7 @@ class HyperbolicEmbedding(Embedding):
         new_points[0] = (1 + norm_points**2) / (1 - norm_points**2)
         new_points[1:] = (2 * vectors) / (1 - norm_points**2)        
         return new_points
-
+    ################################################################################################
     def matrix_sqrtm(self, A: Union[np.ndarray, torch.Tensor]) -> torch.Tensor:
         """
         Computes the matrix square root of a positive definite matrix using eigenvalue decomposition.
@@ -417,21 +393,13 @@ class HyperbolicEmbedding(Embedding):
         else:
             raise TypeError("Input must be a NumPy array or a PyTorch tensor.")
 
-        # Eigenvalue decomposition (for symmetric matrices)
         eigvals, eigvecs = torch.linalg.eigh(A)
-
-        # Ensure eigenvalues are non-negative by clamping any small negatives to zero
         eigvals = torch.clamp(eigvals, min=0)
-
-        # Reconstruct the matrix square root using the eigendecomposition
         return eigvecs @ torch.diag(torch.sqrt(eigvals)) @ eigvecs.T
-
+    ################################################################################################
     def __repr__(self) -> str:
         """Returns a string representation of the HyperbolicEmbedding."""
         return (f"HyperbolicEmbedding(curvature={self._curvature.item():.2f}, model={self.model}, points_shape={list(self._points.shape)})")
-
-####################################################################################################
-####################################################################################################
 ####################################################################################################
 class PoincareEmbedding(HyperbolicEmbedding):
     """
@@ -447,8 +415,8 @@ class PoincareEmbedding(HyperbolicEmbedding):
     def __init__(self, 
                  curvature: Optional[float] = -1, 
                  points: Optional[Union[np.ndarray, torch.Tensor]] = None, 
-                 labels: Optional[List[Union[str, int]]] = None,
-                 enable_logging: bool = False) -> None:
+                 labels: Optional[List[Union[str, int]]] = None
+                 ) -> None:
         """
         Initializes the PoincareEmbedding.
 
@@ -456,9 +424,8 @@ class PoincareEmbedding(HyperbolicEmbedding):
             curvature (Optional[float]): The curvature of the space. Must be negative.
             points (Optional[Union[np.ndarray, torch.Tensor]]): A NumPy array or PyTorch tensor of points. Default is None.
             labels (Optional[List[Union[str, int]]]): A list of labels corresponding to the points. Default is None.
-            enable_logging (bool): If True, logging is enabled. Default is False.
         """
-        super().__init__(curvature=curvature, points=points, labels=labels, enable_logging=enable_logging)
+        super().__init__(curvature=curvature, points=points, labels=labels)
         self.model = 'poincare'
         self.norm_constraint = conf.POINCARE_DOMAIN
         self._update_dimensions()
@@ -470,8 +437,8 @@ class PoincareEmbedding(HyperbolicEmbedding):
         norm2 = self._norm2()
         min_norm, max_norm = self.norm_constraint
         if torch.any(norm2 < min_norm) or torch.any(norm2 >= max_norm):
-            if self._logger:
-                self._logger.error(f"Points norm constraint violated: norms={norm2}, constraint=({min_norm}, {max_norm})")
+            if logging_enabled():
+                self._log_info(f"Points norm constraint violated: norms={norm2}, constraint=({min_norm}, {max_norm})")
             raise ValueError(f"Points norm constraint violated: norms must be in range ({min_norm}, {max_norm})")
 
     def _update_dimensions(self) -> None:
@@ -504,7 +471,7 @@ class PoincareEmbedding(HyperbolicEmbedding):
         distance_matrix = (1 / torch.sqrt(torch.abs(self.curvature))) * torch.arccosh(1 + 2 * EDM)        
         self._log_info(f"Computed distance matrix with shape distance_matrix.shape")
 
-        return distance_matrix
+        return distance_matrix.fill_diagonal_(0), self.labels
 
     def centroid(self, 
                  mode: str = 'default', 
@@ -569,8 +536,8 @@ class PoincareEmbedding(HyperbolicEmbedding):
         norm2 = torch.norm(vector, dim=0)**2
         min_norm, max_norm = self.norm_constraint
         if torch.any(norm2 < min_norm) or torch.any(norm2 >= max_norm):
-            if self._logger:
-                self._logger.error("In Poincare model, the L2 norm of the points must be strictly less than 1. Invalid norms: %s", norm2)
+            if logging_enabled():
+                self._log_info("In Poincare model, the L2 norm of the points must be strictly less than 1. Invalid norms: %s", norm2)
             raise ValueError("In Poincare model, the L2 norm of the points must be strictly less than 1.")
 
         self._log_info(f"Translating points by vector with shape {vector.shape}")
@@ -599,8 +566,8 @@ class PoincareEmbedding(HyperbolicEmbedding):
         x = x.to(more_precise_dtype)
 
         if x.shape[0] != b.shape[0]:
-            if self._logger:
-                self._logger.error("Dimension mismatch between points (%s) and vector (%s)", x.shape, b.shape)
+            if logging_enabled():
+                self._log_info("Dimension mismatch between points (%s) and vector (%s)", x.shape, b.shape)
             raise ValueError("Dimension mismatch between points and vector")  
 
         norm_x_sq = torch.sum(x ** 2, dim=0, keepdim=True)
@@ -658,15 +625,13 @@ class LoidEmbedding(HyperbolicEmbedding):
         curvature (float): The curvature of the hyperbolic space.
         points (torch.Tensor): The points in the Loid space.
         labels (List[Union[str, int]]): Optional labels for the points.
-        enable_logging (bool): Whether to enable logging.
     """
 
     def __init__(
         self,
         curvature: Optional[float] = -1,
         points: Optional[Union[np.ndarray, torch.Tensor]] = None,
-        labels: Optional[List[Union[str, int]]] = None,
-        enable_logging: Optional[bool] = False
+        labels: Optional[List[Union[str, int]]] = None
     ) -> None:
         """
         Initializes the LoidEmbedding with the given parameters.
@@ -675,9 +640,8 @@ class LoidEmbedding(HyperbolicEmbedding):
             curvature (float, optional): The curvature of the space. Defaults to -1.
             points (Union[np.ndarray, torch.Tensor], optional): Initial points in the space. Defaults to None.
             labels (List[Union[str, int]], optional): Labels for the points. Defaults to None.
-            enable_logging (bool, optional): Whether to enable logging. Defaults to False.
         """
-        super().__init__(curvature=curvature, points=points, labels=labels, enable_logging=enable_logging)
+        super().__init__(curvature=curvature, points=points, labels=labels)
         self.model = 'loid'
         self.norm_constraint = conf.LOID_DOMAIN
         self._update_dimensions()
@@ -694,11 +658,10 @@ class LoidEmbedding(HyperbolicEmbedding):
         norm2 = self._norm2()
         min_norm, max_norm = self.norm_constraint
         if torch.any(norm2 <= min_norm) or torch.any(norm2 > max_norm):
-            if self._logger:
-                self._logger.error(f"Points norm constraint violated: norms={norm2}, constraint=({min_norm}, {max_norm})")
+            if logging_enabled():
+                self._log_info(f"Points norm constraint violated: norms={norm2}, constraint=({min_norm}, {max_norm})")
             points = self._points
             for n in range(self.n_points):
-                points[:,n] = utils.project_to_hyperbolic_space(points[:,n])
                 points[0,n] = torch.sqrt(1+torch.sum(points[1:,n]**2))
             self._points = points
 
@@ -740,7 +703,7 @@ class LoidEmbedding(HyperbolicEmbedding):
         distance_matrix = (1/torch.sqrt(torch.abs(self.curvature))) * torch.arccosh(-G)        
         self._log_info(f"Computed distance matrix with shape {distance_matrix.shape}")
 
-        return distance_matrix
+        return distance_matrix.fill_diagonal_(0), self.labels
 
     def rotate(self, R: Union[np.ndarray, torch.Tensor]) -> None:
         """
@@ -790,8 +753,8 @@ class LoidEmbedding(HyperbolicEmbedding):
         norm2 = -vector[0]**2 + torch.sum(vector[1:]**2)
         min_norm, max_norm = self.norm_constraint
         if torch.any(norm2 < min_norm) or torch.any(norm2 >= max_norm):
-            if self._logger:
-                self._logger.error("In Loid model, the J-norm of the points must be exactly equal to -1. Invalid norms: %s", norm2)
+            if logging_enabled():
+                self._log_info("In Loid model, the J-norm of the points must be exactly equal to -1. Invalid norms: %s", norm2)
             raise ValueError("In Loid model, the J-norm of the points must be exactly equal to -1.")
 
         
@@ -827,13 +790,13 @@ class LoidEmbedding(HyperbolicEmbedding):
         norm2 = -b[0]**2 + torch.sum(b[1:]**2)
         min_norm, max_norm = self.norm_constraint
         if torch.any(norm2 < min_norm) or torch.any(norm2 >= max_norm):
-            if self._logger:
-                self._logger.error("In Loid model, the J-norm of the points must be exactly equal to -1. Invalid norms: %s", norm2)
+            if logging_enabled():
+                self._log_info("In Loid model, the J-norm of the points must be exactly equal to -1. Invalid norms: %s", norm2)
             raise ValueError("In Loid model, the J-norm of the points must be exactly equal to -1.")
 
         if x.shape[0] != b.shape[0]:
-            if self._logger:
-                self._logger.error("Dimension mismatch between points (%s) and vector (%s)", x.shape, b.shape)
+            if logging_enabled():
+                self._log_info("Dimension mismatch between points (%s) and vector (%s)", x.shape, b.shape)
             raise ValueError("Dimension mismatch between points and vector")
 
         b_ = b[1:]
@@ -915,16 +878,14 @@ class EuclideanEmbedding(Embedding):
 
     def __init__(self, 
                  points: Optional[Union[np.ndarray, torch.Tensor]] = None,
-                 labels: Optional[List[Union[str, int]]] = None,
-                 enable_logging: bool = False):
+                 labels: Optional[List[Union[str, int]]] = None):
         """
         Initializes the EuclideanEmbedding.
 
         Args:
             points (Optional[Union[np.ndarray, torch.Tensor]]): A NumPy array or PyTorch tensor of points. Default is None.
-            enable_logging (bool): If True, logging is enabled. Default is False.
         """
-        super().__init__(geometry='euclidean', points=points, labels=labels, enable_logging=enable_logging)
+        super().__init__(geometry='euclidean', points=points, labels=labels)
         self.curvature = torch.tensor(0)
         self._update_dimensions()
         self.model = 'descartes'
@@ -1001,7 +962,7 @@ class EuclideanEmbedding(Embedding):
         Returns:
             torch.Tensor: The centroid of the points.
         """
-        centroid = torch.mean(self.points, dim=1)
+        centroid = torch.mean(self._points, dim=1)
         self._log_info(f"Computed centroid with shape {centroid.shape}")
         return centroid.to(self._points.dtype)
         
@@ -1020,7 +981,7 @@ class EuclideanEmbedding(Embedding):
         EDM = torch.relu(EDM)
         self._log_info(f"Computed distance matrix with shape distance_matrix.shape")
 
-        return torch.sqrt(EDM)
+        return torch.sqrt(EDM).fill_diagonal_(0), self.labels
 #############################################################################################
 #############################################################################################
 #############################################################################################
@@ -1042,28 +1003,45 @@ class MultiEmbedding:
             enable_logging (bool): If True, logging is enabled. Default is False.
         """
         self.embeddings = []
-        self._current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self._logger = None
-        if enable_logging:
-            self._setup_logging()
+        self._current_time = get_time() or datetime.now()  # Uses a global timestamp function
         self._log_info("Initialized MultiEmbedding with an empty list of embeddings.")
-        self.labels = None
+        self.curvature = None
+        self.dimension = None
 
-    def _setup_logging(self, log_dir: str = conf.LOG_DIRECTORY, log_level: int = logging.INFO, log_format: str = '%(asctime)s - %(levelname)s - %(message)s') -> None:
+    def _log_info(self, message: str) -> None:
         """
-        Set up logging configuration.
+        Logs an informational message.
 
         Args:
-            log_dir (str): Directory where log files will be saved. Default is 'log'.
-            log_level (int): Logging level. Default is logging.INFO.
-            log_format (str): Format for logging messages. Default is '%(asctime)s - %(levelname)s - %(message)s'.
+            message (str): The message to log.
         """
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"MultiEmbedding_{self._current_time}.log")
-        logging.basicConfig(filename=log_file, level=log_level, format=log_format)
-        self._logger = logging.getLogger(__name__)
-        self._log_info("Logging setup complete.")
+        if logging_enabled():  # Check if logging is globally enabled
+            get_logger().info(message)
 
+    def append(self, embedding: 'Embedding') -> None:
+        """
+        Adds an embedding to the collection only if its curvature and dimension match.
+
+        Args:
+            embedding (Embedding): The embedding instance to be added.
+        """
+        if self.curvature is None and self.dimension is None:
+            # First embedding sets the curvature and dimension
+            self.curvature = embedding.curvature
+            self.dimension = embedding.dimension
+        elif embedding.curvature != self.curvature or embedding.dimension != self.dimension:
+            print("Embedding not added due to curvature or dimension mismatch.")
+            self._log_info("Embedding not added due to curvature or dimension mismatch.")
+            return  # Do not append if they do not match
+        
+        self.embeddings.append(embedding)
+        self._log_info("Added embedding.")
+    ################################################################################################
+    def labels(self) -> List[str]:
+        all_labels = sorted({label for embedding in self.embeddings for label in embedding.labels})
+        self._log_info(f"Retrieved {len(all_labels)} labels")
+        return all_labels
+    ################################################################################################
     def save(self, filename: str) -> None:
         """
         Saves the MultiEmbedding instance to a file using pickle.
@@ -1079,8 +1057,7 @@ class MultiEmbedding:
                 pickle.dump(self, file)
                 self._log_info(f"Saved MultiEmbedding to {filename}")
         except Exception as e:
-            if self._logger:
-                self._logger.error("Failed to save MultiEmbedding: %s", e)
+            self._log_info("Failed to save MultiEmbedding: %s", e)
             raise
     
     @staticmethod
@@ -1100,11 +1077,11 @@ class MultiEmbedding:
         try:
             with open(filename, 'rb') as file:
                 instance = pickle.load(file)
-            if hasattr(instance, '_logger') and instance._logger:
+            if hasattr(instance, '_log_info') and instance._log_info:
                 instance._log_info(f"Loaded MultiEmbedding from {filename}")
             return instance
         except Exception as e:
-            logging.error("Failed to load MultiEmbedding: %s", e)
+            self._log_info("Failed to load MultiEmbedding: %s", e)
             raise
 
     def copy(self) -> 'MultiEmbedding':
@@ -1148,29 +1125,7 @@ class MultiEmbedding:
         return self.embeddings[index]
 
 
-    def _log_info(self, message: str) -> None:
-        """
-        Logs an informational message.
-
-        Args:
-            message (str): The message to be logged.
-        """
-        if self._logger:
-            self._logger.info(message)
-
-    def add_embedding(self, embedding: 'Embedding') -> None:
-        """
-        Adds an embedding to the collection with a specified name.
-
-        Args:
-            name (str): The label associated with the embedding.
-            embedding (Embedding): The embedding instance to be added.
-        """
-        self.embeddings.append(embedding)
-        self._log_info(f"Added embedding'.")
-
-
-    def align(self, func = torch.nanmean, mode = 'accurate') -> None:
+    def align(self, **kwargs) -> None:
         """
         Aligns all embeddings by averaging their distance matrices and adjusting
         each embedding to match the reference embedding.
@@ -1180,24 +1135,18 @@ class MultiEmbedding:
             self._log_info("No embeddings to align.")
             return
 
-        dimensions = {int(embedding.dimension) for embedding in self.embeddings}
-        curvatures = {embedding.curvature.item() for embedding in self.embeddings}
-        geometries = {embedding.geometry for embedding in self.embeddings}
+        reference_embedding = self.reference_embedding(**kwargs)
+        print(reference_embedding)
+        print(self.embeddings)
 
-        if len(curvatures) != 1 or len(geometries) != 1:
-            raise ValueError("All embeddings must have the same curvature and geometry.")
-        if len(dimensions) != 1:
-            raise ValueError("All embeddings must have the same dimension.")
+        if self.curvature < 0:
+            for i, embedding in enumerate(self.embeddings):
+                model = procrustes.HyperbolicProcrustes(embedding, reference_embedding,**kwargs)
+                self.embeddings[i] = model.map(embedding)
         else:
-            dimension = list(dimensions)[0]
-
-        reference_embedding = self.reference_embedding(func=func)
-
-        for name, embedding in enumerate(self.embeddings):
-            hp = procrustes.HyperbolicProcrustes(embedding, reference_embedding,mode = mode, enable_logging = self._logger is not None )
-            self.embeddings[name] = hp.map(embedding)
-            # Add Procrustes alignment or other alignment logic if needed.
-            self._log_info(f"Aligned embedding with name '{name}'.")
+            for i, embedding in enumerate(self.embeddings):
+                model = procrustes.EuclideanProcrustes(embedding, reference_embedding,**kwargs)
+                self.embeddings[i] = model.map(embedding)
 
     def distance_matrix(self, 
                         func: Callable[[torch.Tensor], torch.Tensor] = torch.nanmean) -> torch.Tensor:
@@ -1213,8 +1162,6 @@ class MultiEmbedding:
         # Get all unique labels across embeddings
 
         all_labels = sorted({label for embedding in self.embeddings for label in embedding.labels})
-
-        self._labels = all_labels
         n = len(all_labels)
         
         data_type = None
@@ -1231,7 +1178,7 @@ class MultiEmbedding:
         for embedding in self.embeddings:
             idx = torch.tensor(  [all_labels.index(label) for label in embedding.labels] )
             distance_matrix = torch.full((n, n), float('nan'),  dtype=data_type)
-            distance_matrix[idx[:, None], idx] = embedding.distance_matrix()
+            distance_matrix[idx[:, None], idx] = embedding.distance_matrix()[0]
             stacked_matrices[cnt] = distance_matrix
             stacked_counts[cnt] = ~torch.isnan(distance_matrix)
             cnt = cnt + 1
@@ -1257,160 +1204,106 @@ class MultiEmbedding:
             agg_distance_matrix[i, j] = func(combined_non_nan)
 
         self._log_info(f"Computed distance matrix with NaN replacements.")
-        return agg_distance_matrix
+        return agg_distance_matrix, all_labels
+    
+    ################################################################################################
+    def reference_embedding(self, **kwargs) -> 'Embedding':
+        params = {  
+            key: kwargs.get(key, default) for key, default in {
+                'precise_opt': conf.ENABLE_ACCURATE_OPTIMIZATION,
+                'epochs': conf.TOTAL_EPOCHS,
+                'lr_init': conf.INITIAL_LEARNING_RATE,
+                'dist_cutoff': conf.MAX_RANGE,
+                'save_mode': conf.ENABLE_SAVE_MODE,
+                'scale_fn': None,
+                'lr_fn': None,
+                'weight_exp_fn': None
+            }.items()
+        }
 
-
-    def reference_embedding(self, 
-                            func: Callable[[torch.Tensor], torch.Tensor] = torch.nanmean,
-                            **kwargs) -> 'Embedding':
-        """
-        Create a reference embedding from the average distance matrix, supporting both hyperbolic
-        and Euclidean geometries, depending on the curvature of the embeddings.
-
-        Parameters:
-        - dimension (int): Dimensionality of the embedding space.
-        - func (Callable[[torch.Tensor], torch.Tensor]): Function to compute the aggregate. Default is torch.nanmean.
-        - accurate (bool): Embedding accuracy: False for naive, True for advanced (default is False).
-        - epochs (int): Number of epochs for optimization in precise mode (default is 2000).
-        - max_diameter (float): Maximum diameter for scaling the distance matrix (default is 10).
-        - learning_rate (Optional[float]): Learning rate for the optimization process (default is None).
-        - scale_learning (Optional[callable]): Function for scaling during optimization (default is None).
-        - weight_exponent (Optional[float]): Exponent for weights in optimization (default is None).
-        - initial_lr (Optional[float]): Initial learning rate for optimization (default is 0.1).
-
-        Returns:
-        - Embedding: The resulting embedding of the average distance matrix, either hyperbolic or Euclidean.
-
-        Raises:
-        - ValueError: If the embeddings do not have the same curvature or are not all hyperbolic or Euclidean.
-        - ValueError: If 'dimension' is not provided.
-        - RuntimeError: For any errors during the embedding process.
-        """
-        # Ensure all embeddings have the same curvature and geometry
-        curvatures = {embedding.curvature.item() for embedding in self.embeddings}
-        geometries = {embedding.geometry for embedding in self.embeddings}
-        dimensions = {int(embedding.dimension) for embedding in self.embeddings}
-
-        if (len(curvatures) != 1) or (len(geometries) != 1) or (len(dimensions) != 1):
-            raise ValueError("All embeddings must have the same curvature, geometry, and dimension.")
-
-        dimension = torch.tensor(dimensions.pop())
-        curvature = torch.tensor(curvatures.pop())
-        geometry = geometries.pop()
-
-        
-        # Retrieve and validate keyword arguments
-        accurate = kwargs.get('accurate', conf.ENABLE_ACCURATE_OPTIMIZATION)
-        total_epochs = kwargs.get('total_epochs', conf.TOTAL_EPOCHS)
-        initial_lr = kwargs.get('initial_lr', conf.INITIAL_LEARNING_RATE)
-        max_diameter = kwargs.get('max_diameter', conf.MAX_RANGE)
-        enable_save = kwargs.get('enable_save', conf.ENABLE_SAVE_MODE)
-        learning_rate = kwargs.get('learning_rate', None)
-        weight_exponent = kwargs.get('weight_exponent', None)
-
-        def scale_learning(epoch, total_epochs, loss_list):
-            return False
-
-        distance_matrix = self.distance_matrix(func = func)
-        if geometry == 'hyperbolic':
-            try:
-                scale_factor = torch.sqrt(-curvature)
-                distance_matrix *= scale_factor
-                self._log_info("Initiating hyperbolic embedding of the average distance matrix.")
-                
-                gramian = -torch.cosh(distance_matrix)
-                points = utils.lgram_to_points(gramian, dimension).detach()
-                for n in range(points.size(1)):
-                    points[:,n] = utils.project_to_hyperbolic_space(points[:,n])
-                    points[0,n] = torch.sqrt(1+torch.sum(points[1:,n]**2))
-
-                embeddings = embedding.LoidEmbedding(curvature = curvature, points=points, labels = self._labels, enable_logging=self._logger is not None)
-                self._log_info("Naive hyperbolic embedding completed.")
-
-                if accurate:
-                    self._log_info("Initiating precise hyperbolic embedding.")
-                    initial_tangents = utils.hyperbolic_log(points)
-                    tangents, _ = utils.hyperbolic_embedding(
-                            distance_matrix,
-                            dimension,
-                            initial_tangents=initial_tangents,
-                            epochs=total_epochs,
-                            log_function=self._log_info,
-                            learning_rate=learning_rate,
-                            scale_learning=scale_learning,
-                            weight_exponent=weight_exponent,
-                            initial_lr=initial_lr,
-                            enable_save=enable_save,
-                            time=self._current_time
-                            )
-                    embeddings.points = utils.hyperbolic_exponential(tangents)
-                    self._log_info("Precise hyperbolic embedding completed.")
-            except ValueError as ve:
-                self._log_info(f"Value error during hyperbolic embedding: {ve}")
-                raise
-            except RuntimeError as re:
-                self._log_info(f"Runtime error during hyperbolic embedding: {re}")
-                raise
-            except Exception as e:
-                self._log_info(f"Unexpected error during hyperbolic embedding: {e}")
-                raise
-        elif geometry == 'euclidean':
-            try:
-                self._log_info("Initiating Euclidean embedding of the average distance matrix.")
-                n = distance_matrix.size(0)
-
-                # Step 1: Convert the distance matrix to a Gram matrix using double centering
-                J = (torch.eye(n) - torch.ones((n, n)) / n).to(distance_matrix.dtype)
-                gramian = -0.5 * J @ (distance_matrix**2) @ J
-
-                # Step 2: Perform eigen decomposition on the Gram matrix
-                eigenvalues, eigenvectors = torch.linalg.eigh(gramian)
-
-                # Step 3: Sort eigenvalues and eigenvectors in descending order
-                sorted_indices = torch.argsort(eigenvalues, descending=True)
-                eigenvalues = eigenvalues[sorted_indices]
-                eigenvectors = eigenvectors[:, sorted_indices]
-
-                # Step 4: Select the top "dimension" eigenvalues and corresponding eigenvectors
-                top_eigenvalues = eigenvalues[:dimension].clamp(min=0)  # Clamp to ensure non-negative
-                top_eigenvectors = eigenvectors[:, :dimension]
-
-                # Step 5: Compute the coordinates in d-dimensional space
-                points = top_eigenvectors * torch.sqrt(top_eigenvalues).unsqueeze(0)
-                points = points.t()
-
-                # Initialize Loid embedding
-                embeddings = embedding.EuclideanEmbedding(points=points,labels = self._labels)
-                self._log_info("Naive euclidean embedding completed.")
-
-                # Precise hyperbolic embedding
-                if accurate:
-                    self._log_info("Initiating precise euclidean embedding.")
-                    points = utils.euclidean_embedding(
-                        distance_matrix**2,
-                        dimension,
-                        initial_points=points,
-                        epochs=total_epochs,
-                        log_function=self._log_info,
-                        learning_rate=learning_rate,
-                        weight_exponent=weight_exponent,
-                        initial_lr=initial_lr,
-                        enable_save=enable_save,
-                        time=self._current_time
-                    )
-                    embeddings.points = points
-                    self._log_info("Precise euclidean embedding completed.")
-            except ValueError as ve:
-                self._log_info(f"Value error during euclidean embedding: {ve}")
-                raise
-            except RuntimeError as re:
-                self._log_info(f"Runtime error during euclidean embedding: {re}")
-                raise
-            except Exception as e:
-                self._log_info(f"Unexpected error during euclidean embedding: {e}")
-                raise
+        if self.curvature < 0 :
+            geometry = 'hyperbolic'
         else:
-            raise ValueError(f"Unsupported geometry: {geometry}")
+            geometry = 'euclidean'
 
+        try:
+            embedding = (self._embed_hyperbolic if geometry == 'hyperbolic' else self._embed_euclidean)(self.dimension, **params)
+        except Exception as e:
+            self._log_info(f"Error during embedding: {e}")
+            raise
+
+        directory = f"{conf.OUTPUT_DIRECTORY}/{self._current_time.strftime('%Y-%m-%d_%H-%M-%S')}"
+        filepath = f"{directory}/{geometry}_embedding_{self.dimension}d.pkl"
+        os.makedirs(directory, exist_ok=True)
+        try:
+            with open(filepath, 'wb') as file:
+                pickle.dump(embedding, file)
+            self._log_info(f"Object successfully saved to {filepath}")
+        except (IOError, pickle.PicklingError, Exception) as e:
+            self._log_info(f"Error while saving object: {e}")
+            raise
+
+        return embedding
+    ################################################################################################
+    def _embed_euclidean(self, dim: int, **params) -> 'Embedding':
+        """Handle naive and precise Euclidean embeddings."""
+        dist_mat = self.distance_matrix()[0]
+        # Naive Euclidean embedding
+        self._log_info("Initiating naive Euclidean embedding.")
+        points = self._naive_euclidean_embedding(dist_mat, dim)
+        embeddings = EuclideanEmbedding(points=points, labels=self.labels())
+        self._log_info("Naive Euclidean embedding completed.")
+        if params['precise_opt']:
+            self._log_info("Initiating precise Euclidean embedding.")
+            embeddings.points = self._precise_euclidean_embedding(dist_mat, dim, points, **params)
+            self._log_info("Precise Euclidean embedding completed.")
         return embeddings
-
+    ################################################################################################
+    def _naive_euclidean_embedding(self, dist_mat, dim):
+        n = dist_mat.shape[0]
+        J = torch.eye(n) - 1/n
+        J = J.to(torch.float64)
+        G = -0.5 * J @ dist_mat @ J
+        vals, vecs = (torch.linalg.eigh(G) if dim >= n else 
+                      map(torch.tensor, spla.eigsh(G.cpu().numpy(), k=dim, which='LM')))
+        X = vecs[:, vals.argsort(descending=True)] * vals.clamp(min=0).sqrt()
+        return X.t() if dim <= n else torch.cat([X.t(), torch.zeros(dim - n, n)], dim=0)
+    ################################################################################################
+    def _precise_euclidean_embedding(self, dist_mat, dim, points, **params):
+        return utils.euclidean_embedding(dist_mat, dim, init_pts=points, log_fn=self._log_info, time_stamp=self._current_time, **params)
+    ################################################################################################
+    def _embed_hyperbolic(self, dim: int, **params) -> 'Embedding':
+        """Handle naive and precise hyperbolic embeddings."""
+        scale_factor = torch.sqrt(torch.abs(self.curvature))
+        print(self.curvature)
+        dist_mat = self.distance_matrix()[0] * scale_factor
+        # Naive hyperbolic embedding
+        self._log_info("Initiating naive hyperbolic embedding.")
+        points = self._naive_hyperbolic_embedding(dist_mat, dim)
+        embeddings = LoidEmbedding(points=points, labels=self.labels(), curvature=-(scale_factor ** 2))
+        self._log_info("Naive hyperbolic embedding completed.")
+        if params['precise_opt']:
+            self._log_info("Initiating precise hyperbolic embedding.")
+            points, scale = self._precise_hyperbolic_embedding(dist_mat, dim, points, **params)
+            embeddings.points = points
+            embeddings.curvature *= scale**2
+        return embeddings
+    ################################################################################################
+    def _naive_hyperbolic_embedding(self, dist_mat, dim):
+        gramian = -torch.cosh(dist_mat)
+        points = utils.lgram_to_pts(gramian, dim)
+        for n in range(points.size(1)):
+            points[:, n] = utils.hyperbolic_proj(points[:, n])
+            points[0, n] = torch.sqrt(1 + torch.sum(points[1:, n] ** 2))
+        return points
+    ################################################################################################
+    def _precise_hyperbolic_embedding(self, dist_mat, dim, points, **params):
+        scale_fn = lambda x1, x2, x3=None: False 
+        pts, scale = utils.hyperbolic_embedding(
+            dist_mat, dim, init_pts=points, epochs=params['epochs'],
+            log_fn=self._log_info, lr_fn=params['lr_fn'], scale_fn=scale_fn, 
+            weight_exp_fn=params['weight_exp_fn'], lr_init=params['lr_init'], 
+            save_mode=params['save_mode'], time_stamp=self._current_time
+        )
+        self._log_info("Precise hyperbolic embedding completed.")
+        return pts, scale

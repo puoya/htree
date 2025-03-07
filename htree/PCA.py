@@ -13,7 +13,6 @@ class PCA:
         embedding: The input embedding to perform PCA on.
         geometry (str): Geometry of the embedding ('hyperbolic' or 'euclidean').
         model (str): Model of the embedding (e.g., 'loid', 'cartesian').
-        logger (logging.Logger): Logger for recording activities.
         _mapping_matrix (np.ndarray): Matrix that defines the PCA mapping.
         mean (np.ndarray): Mean of the input points.
         subspace (np.ndarray): Principal components (subspace) of the input points.
@@ -30,7 +29,6 @@ class PCA:
         self.embedding = embedding
         self._geometry = embedding.geometry
         self._points = embedding.points
-        self._logger = None
         self.mean = None
         self._mapping_matrix = None
 
@@ -40,20 +38,15 @@ class PCA:
         self._validate_embedding()
         self._compute_mapping()
 
-    def _setup_logging(self):
-        """Set up logging for PCA."""
-        self._logger = logging.getLogger(f"PCA_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        if not self._logger.hasHandlers():
-            self._logger.addHandler(handler)
-        self._logger.setLevel(logging.INFO)
+    def _log_info(self, message: str) -> None:
+        """
+        Logs an informational message.
 
-    def _log_info(self, message):
-        """Log an informational message."""
-        if self._logger:
-            self._logger.info(message)
+        Args:
+            message (str): The message to log.
+        """
+        if logging_enabled():  # Check if logging is globally enabled
+            get_logger().info(message)
 
     def _validate_embedding(self):
         """Validate the input embedding."""
