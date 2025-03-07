@@ -4,11 +4,11 @@
 LOG_DIRECTORY = 'tmp/log'
 OUTPUT_DIRECTORY = "tmp/Results"
 OUTPUT_FIGURES_DIRECTORY = "tmp/Images"
-OUTPUT_VIDEO_DIRECTORY = "tmp/Movies"
+OUTPUT_VIDEO_DIRECTORY = "tmp/Videos"
 OUTPUT_SUBSPACE_DIRECTORY = "tmp/Subapce"
 ############################### TREE ###############################
 ENABLE_ACCURATE_OPTIMIZATION = False
-TOTAL_EPOCHS  = 100
+TOTAL_EPOCHS  = 1000
 INITIAL_LEARNING_RATE = 0.01
 MAX_RANGE = 10
 ENABLE_SAVE_MODE = False
@@ -27,7 +27,7 @@ INCREASE_COUNT_RATIO = 0.1
 VIDEO_LENGTH = 60
 ############################### EMBEDDING ###############################
 POINCARE_DOMAIN = (0,1)
-LOID_DOMAIN = (-1-10**(-3), -1+10**(-3))
+LOID_DOMAIN = (-1-10**(-6), -1+10**(-6))
 FRECHET_LEARNING_RATE = 0.001
 FRECHET_MAX_EPOCHS = 1000
 FRECHET_ERROR_TOLERANCE = 1e-8

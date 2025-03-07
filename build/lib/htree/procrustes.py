@@ -6,10 +6,12 @@ import os
 import copy
 from typing import Optional, Union, List
 from datetime import datetime
-from . import conf
-# import conf
-
 from torch.optim import Adam
+
+from . import conf
+from .logger import get_logger, logging_enabled, get_time
+# import conf
+# from logger import get_logger, logging_enabled, get_time
 
 class HyperbolicProcrustes:
     """
@@ -20,14 +22,9 @@ class HyperbolicProcrustes:
         _mapping_matrix (torch.Tensor): Transformation matrix that maps the source embedding to the target embedding.
         source_embedding (Embedding): Source embedding instance.
         target_embedding (Embedding): Target embedding instance.
-        logger (logging.Logger): Logger for recording class activities if enabled.
     """
     
-    def __init__(self, 
-                 source_embedding: 'Embedding', 
-                 target_embedding: 'Embedding', 
-                 mode: str = 'default', 
-                 enable_logging: bool = False):
+    def __init__(self, source_embedding: 'Embedding', target_embedding: 'Embedding', mode: str = 'default'):
         """
         Initializes the HyperbolicProcrustes instance.
 
@@ -35,40 +32,17 @@ class HyperbolicProcrustes:
             source_embedding (Embedding): The source embedding to map from.
             target_embedding (Embedding): The target embedding to map to.
             mode (str): Mode of computation, either 'default' or 'accurate'.
-            enable_logging (bool): If True, enables logging. Default is False.
         """
-        self._logger = None
-        self._current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        if enable_logging:
-            self._setup_logging()
-
+        self._current_time = get_time() or datetime.now()
         self.source_embedding = source_embedding
         self.source_model = source_embedding.model
         self.target_embedding = target_embedding
         self.target_model = target_embedding.model
         self._mapping_matrix = None
         
-
         self._log_info("Initializing HyperbolicProcrustes")
         self._validate_embeddings()
-        self._compute_mapping(mode = mode)
-
-    def _setup_logging(self, log_dir: str = conf.LOG_DIRECTORY, log_level: int = logging.INFO, log_format: str = '%(asctime)s - %(levelname)s - %(message)s') -> None:
-        """
-        Configures logging for the class.
-
-        Args:
-            log_dir (str): Directory for saving log files. Defaults to 'log'.
-            log_level (int): Logging level. Defaults to logging.INFO.
-            log_format (str): Format for log messages. Defaults to '%(asctime)s - %(levelname)s - %(message)s'.
-        """
-        os.makedirs(log_dir, exist_ok=True)
-        
-        log_file = os.path.join(log_dir, f"HyperbolicProcrustes_{self._current_time}.log")
-        logging.basicConfig(filename=log_file, level=log_level, format=log_format)
-        self._logger = logging.getLogger(__name__)
-        self._log_info("Logging setup complete.")
+        self._compute_mapping(mode=mode)
 
     def _log_info(self, message: str) -> None:
         """
@@ -77,8 +51,8 @@ class HyperbolicProcrustes:
         Args:
             message (str): The message to be logged.
         """
-        if self._logger:
-            self._logger.info(message)
+        if logging_enabled():  # Check global logging state
+            get_logger().info(message)
 
     def _validate_embeddings(self) -> None:
         """
@@ -194,7 +168,6 @@ class HyperbolicProcrustes:
         # Center the source and target embeddings
         src_embedding = self.source_embedding.copy()
         target_embedding = self.target_embedding.copy()
-
 
         # Filter points by intersecting labels
         source_labels = set(src_embedding._labels)
@@ -316,8 +289,7 @@ class EuclideanProcrustes:
     
     def __init__(self, 
                  source_embedding: 'Embedding', 
-                 target_embedding: 'Embedding', 
-                 enable_logging: bool = False):
+                 target_embedding: 'Embedding'):
         """
         Initializes the EuclideanProcrustes instance.
 
@@ -327,11 +299,7 @@ class EuclideanProcrustes:
             mode (str): Mode of computation, either 'default' or 'accurate'.
             enable_logging (bool): If True, enables logging. Default is False.
         """
-        self._current_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self._logger = None
-        if enable_logging:
-            self._setup_logging()
-
+        self._current_time = get_time() or datetime.now()
         self.source_embedding = source_embedding
         self.target_embedding = target_embedding
         self._mapping_matrix = None
@@ -340,22 +308,6 @@ class EuclideanProcrustes:
         self._validate_embeddings()
         self._compute_mapping()
 
-    def _setup_logging(self, log_dir: str = conf.LOG_DIRECTORY, log_level: int = logging.INFO, log_format: str = '%(asctime)s - %(levelname)s - %(message)s') -> None:
-        """
-        Configures logging for the class.
-
-        Args:
-            log_dir (str): Directory for saving log files. Defaults to 'log'.
-            log_level (int): Logging level. Defaults to logging.INFO.
-            log_format (str): Format for log messages. Defaults to '%(asctime)s - %(levelname)s - %(message)s'.
-        """
-        os.makedirs(log_dir, exist_ok=True)
-        
-        log_file = os.path.join(log_dir, f"EuclideanProcrustes_{self._current_time}.log")
-        logging.basicConfig(filename=log_file, level=log_level, format=log_format)
-        self._logger = logging.getLogger(__name__)
-        self._log_info("Logging setup complete.")
-
     def _log_info(self, message: str) -> None:
         """
         Logs an informational message.
@@ -363,8 +315,8 @@ class EuclideanProcrustes:
         Args:
             message (str): The message to be logged.
         """
-        if self._logger:
-            self._logger.info(message)
+        if logging_enabled():  # Check global logging state
+            get_logger().info(message)
 
     def _validate_embeddings(self) -> None:
         """
@@ -379,19 +331,7 @@ class EuclideanProcrustes:
         
         self._log_info("Validation successful")
 
-    # def project_to_orthogonal(self, R: torch.Tensor) -> torch.Tensor:
-    #     """
-    #     Projects the given matrix R to the nearest orthogonal matrix using Singular Value Decomposition (SVD).
-
-    #     Args:
-    #         R (torch.Tensor): The matrix to be projected.
-
-    #     Returns:
-    #         torch.Tensor: The orthogonal matrix closest to R.
-    #     """
-    #     U, _, V = torch.svd(R)
-    #     return (U @ V.T).double()
-
+    
     def _compute_mapping(self) -> None:
         """
         Computes the Euclidean orthogonal Procrustes mapping and associated cost.
@@ -407,10 +347,10 @@ class EuclideanProcrustes:
         src_center = src_embedding.centroid()
         src_embedding.center()
 
-
         trg_embedding = self.target_embedding.copy()
         trg_center = trg_embedding.centroid()
         trg_embedding.center()
+
 
         # Compute optimal rotation matrix using SVD
         U, _, Vt = torch.svd(torch.mm(trg_embedding.points, src_embedding.points.T))
@@ -422,50 +362,7 @@ class EuclideanProcrustes:
         # Compute the transformation matrix
         self._mapping_matrix = torch.eye(dimension+1, device=R_init.device, dtype=R_init.dtype)
         self._mapping_matrix[:-1, :-1] = R_init
-        self._mapping_matrix[:-1, -1] = b_init
-
-        # src_embedding = self.source_embedding.copy()
-        # trg_embedding = self.target_embedding.copy()
-        # if mode == 'accurate':
-        #     src_points = src_embedding._points
-        #     # b = torch.zeros(D, requires_grad=True,dtype=src_points.dtype)
-        #     # R = torch.eye(D, requires_grad=True,dtype=src_points.dtype)
-
-        #     b = torch.tensor(b_init, requires_grad=True, dtype=src_points.dtype)
-        #     R = torch.tensor(R_init, requires_grad=True, dtype=src_points.dtype)
-        #     optimizer = Adam([b, R], lr=0.001)
-
-        #     for epoch in range(1000):
-        #         optimizer.zero_grad()
-
-        #         # Apply the current rotation and translation to the source points
-        #         src_embedding.points = R @ src_points.clone()
-        #         src_embedding.translate(b)
-
-        #         # Compute the cost function
-        #         cost = sum(
-        #             (torch.norm(src_embedding.points[:, n]- trg_embedding.points[:, n]))**2 
-        #             for n in range(src_embedding.n_points)
-        #         )
-        #         cost.backward(retain_graph=True)
-                
-        #         # Orthogonal projection of rotation matrix
-        #         with torch.no_grad():
-        #             R.data.copy_(self.project_to_orthogonal(R))
-
-        #         # Handle NaN gradients
-        #         with torch.no_grad():
-        #             for param in optimizer.param_groups[0]['params']:
-        #                 if param.grad is not None:
-        #                     param.grad = torch.nan_to_num(param.grad, nan=0.0)
-        #         optimizer.step()
-
-        #         self._log_info(f"Epoch {epoch}, Cost: {cost.item()}, b: {b.detach().numpy()}, R: {R.detach().numpy()}")
-            
-        #     # Final orthogonal projection of R
-        #     R = self.project_to_orthogonal(R.detach())
-        #     self._mapping_matrix[:-1, :-1] = R
-        #     self._mapping_matrix[:-1, -1] = b.detach()
+        self._mapping_matrix[:-1, -1] = b_init.view(-1)
 
     def map(self, source_embedding: 'Embedding') -> 'Embedding':
         """
