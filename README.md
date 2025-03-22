@@ -140,9 +140,9 @@ The `embed` has several optional parameters (kwargs) that allow customization of
 
 #### Parameters:
 
-* **`dimension` (int) [Required]:**
-  + Defines the number of dimensions for the embedding space. For example, `dimension=2` creates a 2D embedding.
-  + **Example**: A 2D hyperbolic embedding is common for visualization purposes, while higher dimensions (e.g., `dimension=3`) might be used for more complex analyses.
+* **`dim` (int) [Required]:**
+  + Defines the number of dimensions for the embedding space. For example, `dim=2` creates a 2D embedding.
+  + **Example**: A 2D hyperbolic embedding is common for visualization purposes, while higher dimensions (e.g., `dim=3`) might be used for more complex analyses.
 * **`geometry` (str) [Default: `hyperbolic`]:**
   + Specifies the geometric space to use for embedding.
   + Options:
@@ -177,21 +177,21 @@ The `embed` has several optional parameters (kwargs) that allow customization of
   print(tree.embed(dim=2, precise_opt=True, lr_init=0.1))
   HyperbolicEmbedding(curvature=-10.58, model=loid, points_shape=[3, 14])
   ```
-* **`max_diameter` (float) [Default: `10`]:**
-  + The maximum diameter used to scale the distance matrix before embedding. This helps to ensure consistent scaling across different trees, which is especially useful for comparing multiple trees embedded in the same space.
+* **`dist_cutoff` (float) [Default: `10`]:**
+  + The distance cutoff used to scale the distance matrix before embedding. This helps to ensure consistent scaling across different trees, which is especially useful for comparing multiple trees embedded in the same space.
 + Example:
   ```python
-  >>> print(tree.embed(dimension=2, max_diameter=5.0))
+  print(tree.embed(dim=2, dist_cutoff=5.0))
   HyperbolicEmbedding(curvature=-3.89, model=loid, points_shape=[3, 14])
   ```
-* **`enable_save` (bool) [Default: `True`]:**
-  + Whether to save intermediate states during the embedding process. This can be useful for tracking progress or debugging, especially when using long-running optimizations with `accurate=True`.
+* **`save_mode` (bool) [Default: `False`]:**
+  + Whether to save intermediate states during the embedding process. This can be useful for tracking progress or debugging, especially when using long-running optimizations with `precise_opt=True`.
   + Example:
   ```python
-  >>> print(tree.embed(dimension=2, accurate=True, enable_save=True))
+  print(tree.embed(dim=2, precise_opt=True, save_mode=True))
   HyperbolicEmbedding(curvature=-10.58, model=loid, points_shape=[3, 14])
   ```
-  Saved data is stored in the directory `conf.OUTPUT_DIRECTORY/timestamp`, where `timestamp` is the current time when the embedding process starts. Each run generates a unique folder for its saved outputs. The results of the embedding process are saved in the `geometry_space.pkl` file within the timestamped folder. When `enable_save=True`, the following additional metrics are saved in the same directory during each epoch of the embedding process:
+  Saved data is stored in the directory `conf.OUTPUT_DIRECTORY/timestamp`, where `timestamp` is the current time when the embedding process starts. Each run generates a unique folder for its saved outputs. The results of the embedding process are saved in the `hyperbolic_embedding_{dim}.pkl` file within the timestamped folder. When `save_mode=True`, the following additional metrics are saved in the same directory during each epoch of the embedding process:
 
   - **Relative Error**: The normalized difference between the estimated and actual distance matrices at each epoch.
   -  **Weights**: The normalization weights used in the cost during each epoch's optimization.
@@ -199,13 +199,13 @@ The `embed` has several optional parameters (kwargs) that allow customization of
   -  **Scale Booleans**: Information regarding if the scale learning is enabled in each epoch.
   
   
-* **`enable_movie` (bool) [Default: `True`]:**
-  + Whether to generate a visual representation (movie) of the embedding process. This can be helpful for understanding the evolution of the embedding as it progresses through optimization steps. 
+* **`export_video` (bool) [Default: `False`]:**
+  + Whether to generate a visual representation (video) of the embedding process. This can be helpful for understanding the evolution of the embedding as it progresses through optimization steps. 
   + Example:
   ```python
-  >>> tree.embed(dimension=2, accurate=True, enable_movie=True)
+  tree.embed(dim=2, precise_opt=True, export_video=True)
   ```
-  The movie is saved in MP4 format in `confg.RESULTS_DIR/Movies/timestamp` where timestamp is the time the embedding process was initiated. In addition to the video, if `enable_movie=True`, individual frame images captured during the embedding process are saved in `conf.OUTPUT_DIRECTORY/Images/timestamp`. This allows you to view each step of the embedding visually and track its progression at a finer granularity.
+  The movie is saved in MP4 format in `confg.RESULTS_DIR/Videos/timestamp` where timestamp is the time the embedding process was initiated. In addition to the video, if `export_video=True`, individual frame images captured during the embedding process are saved in `conf.OUTPUT_DIRECTORY/Images/timestamp`. This allows you to view each step of the embedding visually and track its progression at a finer granularity.
   - Video Example: Below is a for a video demonstrating how the embedding evolves over time:
   - [![Watch the video](https://img.youtube.com/vi/bj0z6dPB9Uo/0.jpg)](https://youtu.be/bj0z6dPB9Uo)
 
