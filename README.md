@@ -87,21 +87,22 @@ Once a tree is loaded, the `Tree` class provides functions to compute key proper
 * `embed`: Returns a geomtric embedding for a tree.
 
 ```python
->>> # Get top four terminal names
->>> terminals = tree.terminal_names()[:4]
->>> print(terminals)
+# Get top four terminal names
+terminals = tree.terminal_names()[:4]
+print(terminals)
 ['Diospyros_malabarica', 'Huperzia_squarrosa', 'Selaginella_moellendorffii_genome', 'Colchicum_autumnale']
->>> # Compute their distance matrix
->>> dist_matrix = tree.distance_matrix()[:4,:4]
->>> print(dist_matrix)
+# Compute their distance matrix
+dist_matrix, names = tree.distance_matrix()
+print(dist_matrix[:4,:4])
 tensor([[0.0000, 2.0274, 2.1069, 0.9733],
         [2.0274, 0.0000, 1.7451, 1.3855],
         [2.1069, 1.7451, 0.0000, 1.4650],
         [0.9733, 1.3855, 1.4650, 0.0000]])
-
->>> # Get tree diameter
->>> diameter = tree.diameter()
->>> print(diameter)
+print(names[:4])
+['Diospyros_malabarica', 'Huperzia_squarrosa', 'Selaginella_moellendorffii_genome', 'Colchicum_autumnale']
+# Get tree diameter
+diameter = tree.diameter()
+print(diameter)
 tensor(2.5342)
 ```
 
