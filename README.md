@@ -121,7 +121,7 @@ tensor(1.)
 The `embed` method allows embedding the phylogenetic tree into either Euclidean or hyperbolic geometry using different dimensions. This is useful for visualizing or analyzing trees in a geometric space.
 
 `geometry`: The geometry type, either `euclidean` or `hyperbolic`. Defaults to `hyperbolic`.
-`dimension`: The dimension of the embedding space. 
+`dim`: The dimension of the embedding space. 
 
 ```python
 # Embed tree in 2D hyperbolic space
@@ -150,31 +150,31 @@ The `embed` has several optional parameters (kwargs) that allow customization of
     - `euclidean`: Embeds the tree in Euclidean space, more appropriate for flat, linear structures ($$ \ell_2^2 $$ distances).
   + Example:
   ```python
-  >>> print(tree.embed(dimension=2, geometry='euclidean'))
+  print(tree.embed(dim=2, geometry='euclidean'))
   EuclideanEmbedding(points_shape=[2, 14])
   ```
-* **`accurate` (bool) [Default: `False`]:**
+* **`precise_opt` (bool) [Default: `False`]:**
   + Determines whether to use a more accurate and optimized embedding method. 
   + Options:
     - `False`: Quick and less computationally expensive based on spectral factorization methods.
     - `True`: Provides a higher quality embedding, but may take longer due to gradient-descent optimization.
     + Example:
     ```python
-    >>> print(tree.embed(dimension=2, accurate=True))
+    print(tree.embed(dim=2, precise_opt=True))
     HyperbolicEmbedding(curvature=-10.58, model=loid, points_shape=[3, 14])
     ```
-* **`total_epochs` (int) [Default: `2000`]:**
-  + The number of epochs used for optimization during the embedding process. Relevant when `accurate=True` is selected. More epochs typically yield more accurate results at the cost of increased computation time.
+* **`epochs` (int) [Default: `1000`]:**
+  + The number of epochs used for optimization during the embedding process. Relevant when `precise_opt=True` is selected. More epochs typically yield more accurate results at the cost of increased computation time.
   + Example:
   ```python
-  >>> print(tree.embed(dimension=2, accurate=True, total_epochs=1000))
+  print(tree.embed(dim=2, precise_opt=True, epochs=2000))
   HyperbolicEmbedding(curvature=-13.20, model=loid, points_shape=[3, 14])
   ```
-* **`initial_lr` (float) [Default: `0.1`]:**
+* **`lr_init` (float) [Default: `0.01`]:**
   + The initial learning rate for the optimizer during the embedding process. This value controls how quickly the optimization process converges. A higher learning rate can speed up convergence but may overshoot optimal values, while a lower learning rate ensures a smoother, more gradual approach.
   + Example:
   ```python
-  >>> print(tree.embed(dimension=2, accurate=True, initial_lr=0.01))
+  print(tree.embed(dim=2, precise_opt=True, lr_init=0.1))
   HyperbolicEmbedding(curvature=-10.58, model=loid, points_shape=[3, 14])
   ```
 * **`max_diameter` (float) [Default: `10`]:**
