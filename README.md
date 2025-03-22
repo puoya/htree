@@ -8,7 +8,7 @@ This repository provides a Python class for processing and embedding phylogeneti
 To use `htree`, ensure your system meets the following requirements:
 
 ### 🖥 System Requirements
-- **Python Version**: `>=3.6`
+- **Python Version**: `>=3.12.2`
 - **Operating System**: Compatible with Linux, macOS, and Windows
 
 ### 📦 Dependencies
@@ -17,7 +17,6 @@ To use `htree`, ensure your system meets the following requirements:
 - `numpy` – Numerical operations  
 - `scipy` – Scientific computing  
 - `matplotlib` – Visualization  
-- `scikit-learn` – Machine learning utilities  
 - `torch` – PyTorch for embedding optimization  
 - `treeswift` – Phylogenetic tree processing  
 - `tqdm` – Progress bar for operations  
@@ -49,16 +48,16 @@ The `Tree` class provides an efficient way to load, process, and embed phylogene
 The `Tree` class can be initialized either by providing a file path to a tree file or by directly passing a `treeswift.Tree` object along with a name.
 
 ```python
->>> from htree.tree_collections import Tree
->>> # Initialize from file
->>> tree = Tree("path/to/treefile.tre")
->>> print(tree)
+from htree.tree_collections import Tree
+# Initialize from file
+tree = Tree("path/to/treefile.tre")
+print(tree)
 Tree(treefile.tre)
->>> # Initialize from a treeswift Tree object
->>> import treeswift as ts
->>> t = ts.read_tree_newick("path/to/treefile.tre")
->>> tree = Tree("treefile.tre", t)
->>> print(tree)
+# Initialize from a treeswift Tree object
+import treeswift as ts
+t = ts.read_tree_newick("path/to/treefile.tre")
+tree = Tree("treefile.tre", t)
+print(tree)
 Tree(treefile.tre)
 ```
 
@@ -69,9 +68,9 @@ Once initialized, the `Tree` object is ready for operations such as embedding, n
 The class supports logging for debugging and tracing execution. By setting `enable_logging=True`, a log file will be created in the specified directory (default: as configured in your package’s `config`).
 
 ```python
->>> # Initialize with logging enabled
->>> tree = Tree("path/to/treefile.tre", enable_logging=True)
->>> print(tree)
+# Initialize with logging enabled
+tree = Tree("path/to/treefile.tre", enable_logging=True)
+print(tree)
 Tree(treefile.tre)
 ```
 The log will store information such as tree initialization details, embedding operations, and error messages, making it easier to trace issues or understand the workflow. Log files are named according to the current timestamp and stored in the configured log directory `conf.LOG_DIRECTORY`.
