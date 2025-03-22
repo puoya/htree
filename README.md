@@ -306,7 +306,7 @@ The `embed` has several optional parameters (kwargs) that allow customization of
          return 0.0  # No weighting initially
      # Gradually increase the negative weight exponent after the no-weight phase
      return -(epoch - no_weight_epochs) / (total_epochs - 1 - no_weight_epochs)
-   tree.embed(dim=2, precise_opt=True, weight_exp_fn=custom_weight_exponent)
+  tree.embed(dim=2, precise_opt=True, weight_exp_fn=custom_weight_exponent)
   ```
 
 ## Saving and Copying Trees
@@ -316,10 +316,10 @@ The class provides utility functions to save and copy trees:
 `copy()`: Create a deep copy of the tree object, useful for making modifications without affecting the original tree.
 
 ```python
->>> # Save tree to a file
->>> tree.save("path/to/treefile2.tre") 
->>> # Copy the tree object
->>> tree_copy = tree.copy()
+# Save tree to a file
+tree.save("path/to/treefile2.tre") 
+# Copy the tree object
+tree_copy = tree.copy()
 ```
 
 ## MultiTree Class
