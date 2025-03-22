@@ -110,10 +110,10 @@ tensor(2.5342)
 The `normalize` method scales the branch lengths of the tree such that the maximum distance (tree diameter) is set to 1. This is particularly useful before performing embeddings, to ensure consistent scaling across different trees.
 
 ```python
->>> # Normalize tree to have a diameter of 1
->>> tree.normalize()
->>> diameter = tree.diameter()
->>> print(diameter)
+# Normalize tree to have a diameter of 1
+tree.normalize()
+diameter = tree.diameter()
+print(diameter)
 tensor(1.)
 ```
 
@@ -124,13 +124,13 @@ The `embed` method allows embedding the phylogenetic tree into either Euclidean 
 `dimension`: The dimension of the embedding space. 
 
 ```python
->>> # Embed tree in 2D hyperbolic space
->>> embedding = tree.embed(dimension=2, geometry='hyperbolic')
->>> print(embedding)
+# Embed tree in 2D hyperbolic space
+embedding = tree.embed(dim=2, geometry='hyperbolic')
+print(embedding)
 HyperbolicEmbedding(curvature=-15.57, model=loid, points_shape=[3, 14])
->>> # Embed tree in 3D Euclidean space
->>> embedding = tree.embed(dimension=3, geometry='euclidean')
->>> print(embedding)
+# Embed tree in 3D Euclidean space
+embedding = tree.embed(dim=3, geometry='euclidean')
+print(embedding)
 EuclideanEmbedding(points_shape=[3, 14])
 ```
 
