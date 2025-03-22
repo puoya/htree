@@ -65,11 +65,13 @@ Once initialized, the `Tree` object is ready for operations such as embedding, n
 
 ## Logging Feature
 
-The class supports logging for debugging and tracing execution. By setting `enable_logging=True`, a log file will be created in the specified directory (default: as configured in your package’s `config`).
+The class supports logging for debugging and tracing execution. By setting `logger.set_logger(True)`, a log file will be created in the specified directory (default: as configured in your package’s `config`).
 
 ```python
+import htree.logger as logger
+logger.set_logger(True)
 # Initialize with logging enabled
-tree = Tree("path/to/treefile.tre", enable_logging=True)
+tree = Tree("path/to/treefile.tre")
 print(tree)
 Tree(treefile.tre)
 ```
