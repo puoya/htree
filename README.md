@@ -210,90 +210,103 @@ The `embed` has several optional parameters (kwargs) that allow customization of
   - [![Watch the video](https://img.youtube.com/vi/bj0z6dPB9Uo/0.jpg)](https://youtu.be/bj0z6dPB9Uo)
 
 
-* **`learning_rate` (callable, optional) [Default: `None`]:**
-  + Specifies a custom learning rate function for the optimization process. The function takes in arguments like the current epoch, total epochs, and a list of losses, and returns a float value representing the learning rate at that epoch. If provided, the actual learning rate is computed as the product of the initial learning rate (`initial_lr`) and the value returned by this function. If not provided, an adaptive learning rate is used, adjusting based on the progress of the optimization process.
+* **`lr_fn` (callable, optional) [Default: `None`]:**
+  + Specifies a custom learning rate function for the optimization process. The function takes in arguments like the current epoch, total epochs, and a list of losses, and returns a float value representing the learning rate at that epoch. If provided, the actual learning rate is computed as the product of the initial learning rate (`lr_init`) and the value returned by this function. If not provided, an adaptive learning rate is used, adjusting based on the progress of the optimization process.
   + Example:
   ```python
-  >>> def custom_learning_rate(epoch: int, total_epochs: int, loss_list: List[float]) -> float:
-  >>>   """
-  >>>   Calculate a dynamic learning rate based on the current epoch and total number of epochs.
-  >>>   Parameters:
-  >>>   - epoch (int): The current epoch in the training process.
-  >>>   - total_epochs (int): The total number of epochs in the training process.
-  >>>   - loss_list (list): A list of recorded loss values (can be used for further custom logic).
-  >>>   Returns:
-  >>>   - float: The dynamic learning rate for the current epoch.
-  >>>   Raises:
-  >>>   - ValueError: If `total_epochs` is less than or equal to 1.
-  >>>   """
-  >>>   if total_epochs <= 1:
-  >>>       raise ValueError("Total epochs must be greater than 1.")
-  >>>   # Example: Reduce learning rate as training progresses
-  >>>   decay_factor = 0.5  # Factor by which to decay the learning rate
-  >>>   loss_threshold = 0.01  # Loss threshold for further reduction
-  >>>   decay_start_epoch = int(0.7 * total_epochs)  # When to start decaying
-  >>>   # Reduce learning rate if the epoch is beyond a certain point
-  >>>   if epoch > decay_start_epoch:
-  >>>       # Learning rate decays based on the remaining epochs
-  >>>       decay_rate = 1 - (epoch - decay_start_epoch) / (total_epochs - decay_start_epoch)
-  >>>   else:
-  >>>       decay_rate = 1.0  # No decay before the threshold
-  >>>   # Further adjust learning rate if recent loss has not improved sufficiently
-  >>>   if len(loss_list) > 1 and loss_list[-1] > loss_threshold:
-  >>>       decay_rate *= decay_factor
-  >>>   return  decay_rate
-  >>> tree.embed(dimension=2, accurate=True, learning_rate=custom_learning_rate, initial_lr = 0.01)
+  def custom_learning_rate(epoch: int, total_epochs: int, loss_list: List[float]) -> float:
+    """ 
+    Calculate a dynamic learning rate based on the current epoch and total number of epochs.
+    Parameters:
+    - epoch (int): The current epoch in the training process.
+    - total_epochs (int): The total number of epochs in the training process.
+    - loss_list (list): A list of recorded loss values (can be used for further custom logic).
+
+    Returns:
+    - float: The dynamic learning rate for the current epoch.
+
+    Raises:
+    - ValueError: If `total_epochs` is less than or equal to 1.
+    """
+
+    if total_epochs <= 1:
+        raise ValueError("Total epochs must be greater than 1.")
+
+    # Example: Reduce learning rate as training progresses
+    decay_factor = 0.5  # Factor by which to decay the learning rate
+    loss_threshold = 0.01  # Loss threshold for further reduction
+    decay_start_epoch = int(0.7 * total_epochs)  # When to start decaying
+
+    # Reduce learning rate if the epoch is beyond a certain point
+    if epoch > decay_start_epoch:
+        # Learning rate decays based on the remaining epochs
+        decay_rate = 1 - (epoch - decay_start_epoch) / (total_epochs - decay_start_epoch)
+    else:
+        decay_rate = 1.0  # No decay before the threshold
+    # Further adjust learning rate if recent loss has not improved sufficiently
+    if len(loss_list) > 1 and loss_list[-1] > loss_threshold:
+        decay_rate *= decay_factor
+    return  decay_rate
+  tree.embed(dim=2, precise_opt=True, lr_fn=custom_learning_rate, lr_init = 0.01)
   ```
-* **`scale_learning`(callable, optional) [Default: `None`]:**
+* **`scale_fn`(callable, optional) [Default: `None`]:**
   +A custom function that determines whether scale learning should occur during the optimization process. The function takes the current epoch, total epochs, and a list of losses as input, and returns a boolean value. If `True`, scale learning is performed during that epoch; otherwise, it is skipped. If not provided, the default behavior is to enable scale learning during the early epochs of training based on a predefined ratio.
   + Example:
   ```python
-  >>> def custom_scale(epoch: int, total_epochs: int, loss_list: List[float]) -> bool:
-  >>>   """
-  >>>   Determine whether scale learning should occur based on the current epoch and total number of epochs.
-  >>>   Parameters:
-  >>>   - epoch (int): The current epoch in the training process.
-  >>>   - total_epochs (int): The total number of epochs in the training process.
-  >>>   - loss_list (list): A list of recorded loss values (can be used for further custom logic).
-  >>>   Returns:
-  >>>   - bool: `True` if scale learning should occur, `False` otherwise.
-  >>>   Raises:
-  >>>   - ValueError: If `total_epochs` is less than or equal to 1.
-  >>>   """
-  >>>   if total_epochs <= 1:
-  >>>       raise ValueError("Total epochs must be greater than 1.")
-  >>>   # Define the ratio of epochs during which scale learning should be applied
-  >>>   curv_ratio = 0.3  # For example, learning happens during the first 30% of epochs
-  >>>   return epoch < int(0.5 * total_epochs)
-  >>> tree.embed(dimension=2, accurate=True, scale_learning=custom_scale)
+  def custom_scale(epoch: int, total_epochs: int, loss_list: List[float]) -> bool:
+    """
+    Determine whether scale learning should occur based on the current epoch and total number of epochs.
+
+    Parameters:
+    - epoch (int): The current epoch in the training process.
+    - total_epochs (int): The total number of epochs in the training process.
+    - loss_list (list): A list of recorded loss values (can be used for further custom logic).
+
+    Returns:
+    - bool: `True` if scale learning should occur, `False` otherwise.
+    
+    Raises:
+    - ValueError: If `total_epochs` is less than or equal to 1.
+    """
+    if total_epochs <= 1:
+        raise ValueError("Total epochs must be greater than 1.")
+
+    # Define the ratio of epochs during which scale learning should be applied
+    curv_ratio = 0.3  # For example, learning happens during the first 30% of epochs
+    
+    return epoch < int(0.6 * total_epochs)
+  tree.embed(dim=2, precise_opt=True, scale_fn=custom_scale)
   ```
-* **`weight_exponent` (callable, optional) [Default: `None`]:**
+* **`weight_exp_fn` (callable, optional) [Default: `None`]:**
   + A custom function to dynamically compute the weight exponent during the optimization process. The function takes the current epoch and total epochs as input, and returns a float representing the weight exponent for that epoch. The weight exponent determines how distances are weighted during optimization. If not provided, a default behavior is applied, where weighting changes over the course of the training based on the progress of the optimization process.
   + Example:
   ```python
-  >>> def custom_weight_exponent(epoch: int, total_epochs: int,loss_list: List[float]) -> float:
-  >>>   """
-  >>>   Calculate the weight exponent based on the current epoch and total number of epochs.
-  >>>   Parameters:
-  >>>   - epoch (int): The current epoch in the training process.
-  >>>   - total_epochs (int): The total number of epochs in the training process.
-  >>>   - loss_list (list): A list of recorded loss values (can be used for further custom logic).
-  >>>   Returns:
-  >>>   - float: The calculated weight exponent for the current epoch.
-  >>>   Raises:
-  >>>   - ValueError: If `total_epochs` is less than or equal to 1.
-  >>>   """
-  >>>   if total_epochs <= 1:
-  >>>       raise ValueError("Total epochs must be greater than 1.")
-  >>>   # Define a ratio that determines how long to apply no weights
-  >>>   no_weight_ratio = 0.3  # Example ratio: first 30% of epochs without weighting
-  >>>   no_weight_epochs = int(no_weight_ratio * total_epochs)
-  >>>   # No weighting for the first part of the training
-  >>>   if epoch < no_weight_epochs:
-  >>>       return 0.0  # No weighting initially
-  >>>   # Gradually increase the negative weight exponent after the no-weight phase
-  >>>   return -(epoch - no_weight_epochs) / (total_epochs - 1 - no_weight_epochs)
-  >>> tree.embed(dimension=2, accurate=True, weight_exponent=custom_weight_exponent)
+  def custom_weight_exponent(epoch: int, total_epochs: int,loss_list: List[float]) -> float:
+     """
+     Calculate the weight exponent based on the current epoch and total number of epochs.
+     Parameters:
+     - epoch (int): The current epoch in the training process.
+     - total_epochs (int): The total number of epochs in the training process.
+     - loss_list (list): A list of recorded loss values (can be used for further custom logic).
+  
+     Returns:
+     - float: The calculated weight exponent for the current epoch.
+
+     Raises:
+     - ValueError: If `total_epochs` is less than or equal to 1.
+     """
+     if total_epochs <= 1:
+         raise ValueError("Total epochs must be greater than 1.")
+
+     # Define a ratio that determines how long to apply no weights
+     no_weight_ratio = 0.3  # Example ratio: first 30% of epochs without weighting
+     no_weight_epochs = int(no_weight_ratio * total_epochs)
+     # No weighting for the first part of the training
+     if epoch < no_weight_epochs:
+         return 0.0  # No weighting initially
+     # Gradually increase the negative weight exponent after the no-weight phase
+     return -(epoch - no_weight_epochs) / (total_epochs - 1 - no_weight_epochs)
+   tree.embed(dim=2, precise_opt=True, weight_exp_fn=custom_weight_exponent)
   ```
 
 ## Saving and Copying Trees
