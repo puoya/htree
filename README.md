@@ -931,35 +931,35 @@ print(embedding.n_points)
 This example demonstrates the creation and manipulation of a hyperbolic embedding using the `LoidEmbedding` class. Points are generated with a specified dimensionality, and an additional dimension is added based on the Lorentzian norm (squared) of the points. The embedding is initialized in hyperbolic space with a default curvature of `-1`. The curvature, Lorentzian norm, dimensionality, and number of points can be queried or updated, and tensor operations ensure seamless updates to the embedding.
 
 ```python
->>> # Compute the distance matrix between all points in the embedding
->>> print(embedding.distance_matrix())
+# Compute the distance matrix between all points in the embedding
+print(embedding.distance_matrix()[0])
 tensor([[0.0000, 0.9312, 0.6805, 0.6805],
         [0.9312, 0.0000, 0.6805, 0.6805],
         [0.6805, 0.6805, 0.0000, 0.9312],
         [0.6805, 0.6805, 0.9312, 0.0000]], dtype=torch.float64)
->>> # Change the curvature of the embedding to -0.5 and observe how the distance matrix changes
->>> # Distances scale with 1 / sqrt(-curvature), so as curvature becomes shallower (closer to 0), distances increase.
->>> embedding.curvature = -0.5
->>> print(embedding.distance_matrix())
+# Change the curvature of the embedding to -0.5 and observe how the distance matrix changes
+# Distances scale with 1 / sqrt(-curvature), so as curvature becomes shallower (closer to 0), distances increase.
+embedding.curvature = -0.5
+print(embedding.distance_matrix()[0])
 tensor([[0.0000, 1.8625, 1.3611, 1.3611],
         [1.8625, 0.0000, 1.3611, 1.3611],
         [1.3611, 1.3611, 0.0000, 1.8625],
         [1.3611, 1.3611, 1.8625, 0.0000]], dtype=torch.float64)
->>> # Compute the centroid of the points in the embedding (default mode)
->>> print(embedding.centroid())
+# Compute the centroid of the points in the embedding (default mode)
+print(embedding.centroid())
 tensor([[1.],
         [0.],
         [0.]], dtype=torch.float64)# The centroid lies at the origin in this case
->>> # Compute the centroid using the Frechet mode, which applies a different calculation
->>> print(embedding.centroid(mode = 'Frechet'))
+# Compute the centroid using the Frechet mode, which applies a different calculation
+print(embedding.centroid(mode = 'Frechet'))
 tensor([[1.],
         [0.],
         [0.]], dtype=torch.float64)
->>> # Switch the model from Loid to Poincare, transforming the points accordingly
->>> poincare_embedding = embedding.switch_model()
->>> print(poincare_embedding)
+# Switch the model from Loid to Poincare, transforming the points accordingly
+poincare_embedding = embedding.switch_model()
+print(poincare_embedding)
 HyperbolicEmbedding(curvature=-0.50, model=poincare, points_shape=[2, 4])
->>> print(poincare_embedding.distance_matrix())
+print(poincare_embedding.distance_matrix()[0])
 tensor([[0.0000, 1.8625, 1.3611, 1.3611],
         [1.8625, 0.0000, 1.3611, 1.3611],
         [1.3611, 1.3611, 0.0000, 1.8625],
@@ -971,85 +971,85 @@ tensor([[0.0000, 1.8625, 1.3611, 1.3611],
 This section demonstrates the functionality of key methods in the `LoidEmbedding` or `HyperbolicSpace` class, focusing on distance calculations, translating and rotating the embedding, as well as the centering.
 
 ```python
->>> import matplotlib.pyplot as plt
->>> from mpl_toolkits.mplot3d import Axes3D
->>> fig = plt.figure()
->>> ax = fig.add_subplot(111, projection='3d')
->>> # Function to plot embeddings before and after a transformation
->>> def plot_hyperbolic_sheet_with_points(points, color='red', label='Scatter Points', max_radius=2):
->>>     if isinstance(points, torch.Tensor):
->>>         points = points.numpy()
->>>     # Extract x, y, z from points where z = sqrt(1 + x^2 + y^2)
->>>     x_points = points[2,:]  # z from original points as x
->>>     y_points = points[1,:]  # y remains as y
->>>     z_points = np.sqrt(1 + x_points**2 + y_points**2)  # Compute z based on x and y
->>>     def hyperbolic_z(x, y):
->>>         return np.sqrt(1 + x**2 + y**2)
->>>     theta_vals = np.linspace(0, 2 * np.pi, 100)  # Angular coordinate
->>>     r_vals = np.linspace(0, max_radius, 50)  # Radial coordinate
->>>     # Convert polar to cartesian coordinates for a circular grid
->>>     theta_grid, r_grid = np.meshgrid(theta_vals, r_vals)
->>>     x_grid = r_grid * np.cos(theta_grid)
->>>     y_grid = r_grid * np.sin(theta_grid)
->>>     z_grid = hyperbolic_z(x_grid, y_grid)
->>>     ax.plot_wireframe(x_grid, y_grid, z_grid, color='lightblue', alpha=0.5, linewidth=0.5)
->>>     ax.scatter(x_points, y_points, z_points, color=color, s=100, label=label)
->>>     ax.set_xticks([])  # Remove x-axis ticks
->>>     ax.set_yticks([])  # Remove y-axis ticks
->>>     ax.set_zticks([])  # Remove z-axis ticks
->>>     ax.xaxis.pane.fill = False
->>>     ax.yaxis.pane.fill = False
->>>     ax.zaxis.pane.fill = False
->>>     ax.xaxis.line.set_color((0.5, 0.5, 0.5))  # Light gray axis lines
->>>     ax.yaxis.line.set_color((0.5, 0.5, 0.5))  
->>>     ax.zaxis.line.set_color((0.5, 0.5, 0.5))
->>>     ax.set_xlabel('X axis')
->>>     ax.set_ylabel('Y axis')
->>>     ax.set_zlabel('Z axis')
->>>     ax.set_title('Hyperbolic Sheet with Scatter Points')
->>>     ax.legend()
->>> print(embedding.centroid())
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+fig = plt.figure()
+ax = fig.add_subplot(111, projection='3d')
+# Function to plot embeddings before and after a transformation
+def plot_hyperbolic_sheet_with_points(points, color='red', label='Scatter Points', max_radius=2):
+    if isinstance(points, torch.Tensor):
+        points = points.numpy()
+    # Extract x, y, z from points where z = sqrt(1 + x^2 + y^2)
+    x_points = points[2,:]  # z from original points as x
+    y_points = points[1,:]  # y remains as y
+    z_points = np.sqrt(1 + x_points**2 + y_points**2)  # Compute z based on x and y
+    def hyperbolic_z(x, y):
+        return np.sqrt(1 + x**2 + y**2)
+    theta_vals = np.linspace(0, 2 * np.pi, 100)  # Angular coordinate
+    r_vals = np.linspace(0, max_radius, 50)  # Radial coordinate
+    # Convert polar to cartesian coordinates for a circular grid
+    theta_grid, r_grid = np.meshgrid(theta_vals, r_vals)
+    x_grid = r_grid * np.cos(theta_grid)
+    y_grid = r_grid * np.sin(theta_grid)
+    z_grid = hyperbolic_z(x_grid, y_grid)
+    ax.plot_wireframe(x_grid, y_grid, z_grid, color='lightblue', alpha=0.5, linewidth=0.5)
+    ax.scatter(x_points, y_points, z_points, color=color, s=100, label=label)
+    ax.set_xticks([])  # Remove x-axis ticks
+    ax.set_yticks([])  # Remove y-axis ticks
+    ax.set_zticks([])  # Remove z-axis ticks
+    ax.xaxis.pane.fill = False
+    ax.yaxis.pane.fill = False
+    ax.zaxis.pane.fill = False
+    ax.xaxis.line.set_color((0.5, 0.5, 0.5))  # Light gray axis lines
+    ax.yaxis.line.set_color((0.5, 0.5, 0.5))  
+    ax.zaxis.line.set_color((0.5, 0.5, 0.5))
+    ax.set_xlabel('X axis')
+    ax.set_ylabel('Y axis')
+    ax.set_zlabel('Z axis')
+    ax.set_title('Hyperbolic Sheet with Scatter Points')
+    ax.legend()
+print(embedding.centroid())
 tensor([[1.],
         [0.],
         [0.]], dtype=torch.float64)
->>> plot_hyperbolic_sheet_with_points(embedding.points, color='red', label='Points', max_radius=2.5)
->>> translation_vector = np.random.randn(2,1)/2  # 2D translation vector
->>> norm_point = np.linalg.norm(translation_vector, axis=0)
->>> translation_vector = np.vstack([np.sqrt(1 + norm_point**2), translation_vector])
->>> print(translation_vector)
+plot_hyperbolic_sheet_with_points(embedding.points, color='red', label='Points', max_radius=2.5)
+translation_vector = np.random.randn(2,1)/2  # 2D translation vector
+norm_point = np.linalg.norm(translation_vector, axis=0)
+translation_vector = np.vstack([np.sqrt(1 + norm_point**2), translation_vector])
+print(translation_vector)
 [[1.26644363]
  [0.56049116]
  [0.53826492]]
->>> embedding.translate(translation_vector)
->>> print(embedding.centroid())
+embedding.translate(translation_vector)
+print(embedding.centroid())
 tensor([[1.2664],
         [0.5605],
         [0.5383]], dtype=torch.float64)
->>> plot_hyperbolic_sheet_with_points(embedding.points, color='blue', label='After Tranlation', max_radius=2.5)
->>> embedding.center()
->>> plot_embedding_comparison(points, embedding.points, center, embedding.centroid(), 'Effect of Translation', axs[0])
->>> # Get the updated points after translation
->>> print(embedding.centroid())
+plot_hyperbolic_sheet_with_points(embedding.points, color='blue', label='After Tranlation', max_radius=2.5)
+embedding.center()
+plot_embedding_comparison(points, embedding.points, center, embedding.centroid(), 'Effect of Translation', axs[0])
+# Get the updated points after translation
+print(embedding.centroid())
 tensor([[ 1.0000e+00],
         [-5.6656e-17],
         [-6.7987e-17]], dtype=torch.float64)
->>> plt.show()
+plt.show()
 ```
 
 <!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/loid_translate.png" alt="GitHub Logo" width="500"/> -->
 ![GitHub Logo](https://i.imgur.com/odKS4oy.png)
 
 ```python
->>> theta = np.radians(30)
->>> rotation_matrix = np.array([ [np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
->>> # Proper Lorentzian Rotation Matrix
->>> R = np.zeros((3,3))
->>> R[0,0] = 1
->>> R[1:,1:] = rotation_matrix
->>> plot_hyperbolic_sheet_with_points(embedding.points, color='red', label='Points', max_radius=1.5)
->>> embedding.rotate(R)
->>> plot_hyperbolic_sheet_with_points(embedding.points, color='blue', label='After Rotation', max_radius=1.5)
->>> plt.show()
+theta = np.radians(30)
+rotation_matrix = np.array([ [np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+# Proper Lorentzian Rotation Matrix
+R = np.zeros((3,3))
+R[0,0] = 1
+R[1:,1:] = rotation_matrix
+plot_hyperbolic_sheet_with_points(embedding.points, color='red', label='Points', max_radius=1.5)
+embedding.rotate(R)
+plot_hyperbolic_sheet_with_points(embedding.points, color='blue', label='After Rotation', max_radius=1.5)
+plt.show()
 ```
 
 
@@ -1062,13 +1062,12 @@ The `EuclideanProcrustes` class performs Euclidean orthogonal Procrustes analysi
 ## Constructor and Attributes
 
 ```python
->>> EuclideanProcrustes(source_embedding: 'Embedding', target_embedding: 'Embedding', enable_logging: bool = False)
+EuclideanProcrustes(source_embedding: 'Embedding', target_embedding: 'Embedding')
 ```
 The constructor initializes the class with the source and target embeddings, preparing it for alignment.
 
 - **source_embedding** (`Embedding`): The source embedding to map from..
 - **target_embedding** (`Embedding`): The target embedding to map to.
-- **enable_logging** (`bool`): Flag to enable logging.
 
 
 ## Methods
