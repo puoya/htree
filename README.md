@@ -528,48 +528,48 @@ Embedding(geometry=euclidean, points_shape=[2, 10])
 The `translate` method shifts all points in Euclidean space by a specified vector. This method ensures that the points are translated correctly by a vector of matching dimensionality. If the vector’s dimension doesn’t align with the space, it raises an error. The following example demonstrates the translation of points representing the vertices of a regular pentagon.
 
 ```python
->>> import matplotlib.pyplot as plt
->>> from htree.embedding import EuclideanEmbedding
->>> import numpy as np
->>> # Function to generate points at the vertices of a regular pentagon
->>> def generate_pentagon_vertices():
->>>     angles = np.linspace(0, 2 * np.pi, 6)[:-1]  # 5 angles for 5 vertices, excluding the last one to avoid duplication
->>>     x = np.cos(angles)
->>>     y = np.sin(angles)
->>>     return np.vstack((x, y))
->>> # Function to plot points with edges, and axes
->>> def plot_pentagon(ax, points, title, color, marker, label_text):
->>>     ax.scatter(points[0, :], points[1, :], c=color, s=100, edgecolors='black', marker=marker, label=label_text)    
->>>     # Draw edges between consecutive points
->>>     for i in range(points.shape[1]):
->>>         start = i
->>>         end = (i + 1) % points.shape[1]
->>>         ax.plot([points[0, start], points[0, end]], [points[1, start], points[1, end]], color=color)
->>>     # Draw the axes
->>>     ax.axhline(0, color='black', linewidth=0.5)
->>>     ax.axvline(0, color='black', linewidth=0.5)
->>>     ax.set_title(title)
->>>     ax.set_xlabel('X-axis')
->>>     ax.set_ylabel('Y-axis')
->>>     ax.set_aspect('equal', adjustable='box')
->>>     ax.legend()
->>> # Define pentagon vertices
->>> points = generate_pentagon_vertices()
->>> dimension = points.shape[0]
->>> n_points = points.shape[1]
->>> # Initialize embedding
->>> embedding = EuclideanEmbedding(points=points)
->>> # Create a figure for the translation
->>> fig1, ax1 = plt.subplots(figsize=(8, 8))
->>> # Plot the original pentagon vertices with edges
->>> plot_pentagon(ax1, embedding.points, "Translation of Pentagon Vertices", color='black', marker='o', label_text='Original Points')
->>> # Translate the points
->>> translation_vector = np.random.randn(dimension)/2  # 2D translation vector
->>> embedding.translate(translation_vector)
->>> # Plot the translated pentagon vertices with edges
->>> plot_pentagon(ax1, embedding.points, "Translation of Pentagon Vertices", color='green', marker='^', label_text='Translated Points')
->>> # Show the plot for translation
->>> plt.show()
+import matplotlib.pyplot as plt
+from htree.embedding import EuclideanEmbedding
+import numpy as np
+# Function to generate points at the vertices of a regular pentagon
+def generate_pentagon_vertices():
+     angles = np.linspace(0, 2 * np.pi, 6)[:-1]  # 5 angles for 5 vertices, excluding the last one to avoid duplication
+     x = np.cos(angles)
+     y = np.sin(angles)
+     return np.vstack((x, y))
+# Function to plot points with edges, and axes
+def plot_pentagon(ax, points, title, color, marker, label_text):
+     ax.scatter(points[0, :], points[1, :], c=color, s=100, edgecolors='black', marker=marker, label=label_text)    
+     # Draw edges between consecutive points
+     for i in range(points.shape[1]):
+         start = i
+         end = (i + 1) % points.shape[1]
+         ax.plot([points[0, start], points[0, end]], [points[1, start], points[1, end]], color=color)
+     # Draw the axes
+     ax.axhline(0, color='black', linewidth=0.5)
+     ax.axvline(0, color='black', linewidth=0.5)
+     ax.set_title(title)
+     ax.set_xlabel('X-axis')
+     ax.set_ylabel('Y-axis')
+     ax.set_aspect('equal', adjustable='box')
+     ax.legend()
+# Define pentagon vertices
+points = generate_pentagon_vertices()
+dimension = points.shape[0]
+n_points = points.shape[1]
+# Initialize embedding
+embedding = EuclideanEmbedding(points=points)
+# Create a figure for the translation
+fig1, ax1 = plt.subplots(figsize=(8, 8))
+# Plot the original pentagon vertices with edges
+plot_pentagon(ax1, embedding.points, "Translation of Pentagon Vertices", color='black', marker='o', label_text='Original Points')
+# Translate the points
+translation_vector = np.random.randn(dimension)/2  # 2D translation vector
+embedding.translate(translation_vector)
+# Plot the translated pentagon vertices with edges
+plot_pentagon(ax1, embedding.points, "Translation of Pentagon Vertices", color='green', marker='^', label_text='Translated Points')
+# Show the plot for translation
+plt.show()
 ```
 In this example, a regular pentagon is translated by a randomly generated 2D vector, and the changes in the points are visualized on a plot.
 
@@ -583,23 +583,23 @@ This demonstrates the effect of the `translate` method on the pentagon's vertice
 The `rotate` method allows you to rotate the points in Euclidean space by applying a rotation matrix. The method automatically handles the conversion of NumPy arrays to PyTorch tensors, checks for the validity of the rotation matrix, and ensures that the points are rotated correctly. In this example, we create a set of points (the vertices of a pentagon), rotate them by 30 degrees using a rotation matrix, and plot the points before and after rotation.
 
 ```python
->>> embedding = EuclideanEmbedding(points=points, labels=labels)
->>> # Create a figure for the rotation
->>> fig2, ax2 = plt.subplots(figsize=(8, 8))
->>> # Plot the translated pentagon vertices with edges and labels before rotation
->>> plot_pentagon(ax2, embedding.points, "Rotation of Pentagon Vertices", color='black', marker='o', label_text='Before Rotation')
->>> # Convert degrees to radians and define the 2x2 rotation matrix
->>> theta = np.radians(30)
->>> rotation_matrix = np.array([
+embedding = EuclideanEmbedding(points=points, labels=labels)
+# Create a figure for the rotation
+fig2, ax2 = plt.subplots(figsize=(8, 8))
+# Plot the translated pentagon vertices with edges and labels before rotation
+plot_pentagon(ax2, embedding.points, "Rotation of Pentagon Vertices", color='black', marker='o', label_text='Before Rotation')
+# Convert degrees to radians and define the 2x2 rotation matrix
+theta = np.radians(30)
+rotation_matrix = np.array([
     [np.cos(theta), -np.sin(theta)],
     [np.sin(theta), np.cos(theta)]
 ])
->>> # Rotate the points
->>> embedding.rotate(rotation_matrix)
->>> # Plot the pentagon vertices with edges after rotation
->>> plot_pentagon(ax2, embedding.points, "Rotation of Pentagon Vertices", color='red', marker='^', label_text='After Rotation')
->>> # Show the plot for rotation
->>> plt.show()
+# Rotate the points
+embedding.rotate(rotation_matrix)
+# Plot the pentagon vertices with edges after rotation
+plot_pentagon(ax2, embedding.points, "Rotation of Pentagon Vertices", color='red', marker='^', label_text='After Rotation')
+# Show the plot for rotation
+plt.show()
 ```
 
 
