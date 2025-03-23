@@ -378,36 +378,36 @@ Logs can be useful for debugging and provide insights into the tree loading, emb
 ## Distance Matrix and Terminal Names
 The `terminal_names` method in `MultiTree` returns the union of terminal (leaf) names from all trees, removing duplicates. The `distance_matrix` method computes a matrix that represents the average pairwise distances between nodes corresponding to the terminal names, using a customizable aggregation function `func`. For each tree, a distance matrix is first constructed for the leaf nodes in the union set of terminal names. If some terminal nodes are not present in a particular tree, the corresponding values in the matrix are replaced with `NaN`. The aggregation function `func` is then applied across these matrices to compute the final average distance matrix.
 
-It’s important that the provided `func` automatically removes `NaN` values; otherwise, it will raise an error. Examples of valid functions include `torch.nanmean` (default) and `torch.nanmedian`, which both handle `NaN` values correctly. Optionally, a confidence matrix can be returned, indicating the proportion of non-NaN values for each element in the distance matrix.
+It’s important that the provided `func` automatically removes `NaN` values; otherwise, it will raise an error. Examples of valid functions include `torch.nanmean` (default) and `torch.nanmedian`, which both handle `NaN` values correctly. Optionally, a confidence matrix can be returned, indicating the proportion of non-NaN values for each element in the distance matrix. The `method = 'fp'` computes the average distance based on a weighted scheme where each tree has a weight -- equivalent to the relative similarity of it's distance matrix to the average distance matrix.
 ```python
->>> multitree = MultiTree("path/to/trees.tre")[:10]
->>> print(multitree)
+multitree = MultiTree("path/to/trees.tre")[:10]
+print(multitree)
 MultiTree(mTree, 10 trees)
->>> print(multitree.trees)
+print(multitree.trees)
 [Tree(tree_1), Tree(tree_2), Tree(tree_3), Tree(tree_4), Tree(tree_5), Tree(tree_6), Tree(tree_7), Tree(tree_8), Tree(tree_9), Tree(tree_10)]
->>> # Compute the distance matrix with default aggregation (mean)
->>> distance_matrix = multitree.distance_matrix()[:4,:4]
->>> print(distance_matrix)
+# Compute the distance matrix with default aggregation (mean)
+distance_matrix = multitree.distance_matrix()[:4,:4]
+print(distance_matrix)
 tensor([[0.0000, 0.7049, 1.2343, 0.5929],
         [0.7049, 0.0000, 1.3234, 0.6870],
         [1.2343, 1.3234, 0.0000, 1.0143],
         [0.5929, 0.6870, 1.0143, 0.0000]])
->>> # Compute the distance matrix with custom aggregation
->>> import torch
->>> distance_matrix = multitree.distance_matrix(func=torch.nanmedian)[:4,:4]
->>> print(distance_matrix)
+# Compute the distance matrix with custom aggregation
+import torch
+avg_mat, conf, labels = multitree.distance_matrix(func=torch.nanmedian)
+print(avg_mat[:4,:4])
 tensor([[0.0000, 0.5538, 0.9043, 0.5240],
         [0.5538, 0.0000, 1.1598, 0.5902],
         [0.9043, 1.1598, 0.0000, 0.8635],
         [0.5240, 0.5902, 0.8635, 0.0000]])
->>> distance_matrix, confidence_matrix = multitree.distance_matrix(func=torch.nanmedian,confidence= True)
->>> print(confidence_matrix[:4,:4])
-tensor([[0.0000, 0.6000, 0.4000, 0.7000],
-        [0.6000, 0.0000, 0.5000, 0.8000],
-        [0.4000, 0.5000, 0.0000, 0.6000],
-        [0.7000, 0.8000, 0.6000, 0.0000]])
->>> # Compute the union of all terminal names (removes duplicates)
->>> print(multitree.terminal_names()[:4])
+avg_mat, conf, labels = multitree.distance_matrix(method='fp')
+print(avg_mat[:4,:4])
+tensor([[0.0000, 0.6760, 1.1487, 0.5696],
+        [0.6760, 0.0000, 1.2801, 0.6613],
+        [1.1487, 1.2801, 0.0000, 0.9627],
+        [0.5696, 0.6613, 0.9627, 0.0000]])
+# Compute the union of all terminal names (removes duplicates)
+print(multitree.terminal_names()[:4])
 ['Allamanda_cathartica', 'Alsophila_spinulosa', 'Amborella_trichopoda', 'Aquilegia_formosa']
 ```
 
