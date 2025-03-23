@@ -822,35 +822,35 @@ plt.show()
 ![GitHub Logo](https://i.imgur.com/Q7FVghl.png)
 
 ```python
->>> fig, axs = plt.subplots(1, 2, figsize=(14, 7))
->>> # Store the initial points of the embedding
->>> points_before = embedding.points
->>> # Compute the centroid of the embedding
->>> center = embedding.centroid()
->>> # Define a rotation angle of 30 degrees (converted to radians)
->>> theta = np.radians(30)
+fig, axs = plt.subplots(1, 2, figsize=(14, 7))
+# Store the initial points of the embedding
+points_before = embedding.points
+# Compute the centroid of the embedding
+center = embedding.centroid()
+# Define a rotation angle of 30 degrees (converted to radians)
+theta = np.radians(30)
 # Create the 2D rotation matrix for the given angle
->>> rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)],
->>>                             [np.sin(theta), np.cos(theta)]])
->>> # Rotate the points in the embedding using the rotation matrix
->>> embedding.rotate(rotation_matrix)
->>> # Plot the original vs rotated points for the first subplot
->>> plot_embedding_comparison(points_before, embedding.points, center, embedding.centroid(), 'Effect of Rotation', axs[0])
->>> # Store the points after the first rotation
->>> points_before = embedding.points
->>> # Compute the centroid again (after rotation)
->>> center = embedding.centroid()
->>> # Define a rotation angle of -30 degrees (to rotate in the opposite direction)
->>> theta = np.radians(-30)
->>> # Create the 2D rotation matrix for the opposite rotation
->>> rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)],
->>>                             [np.sin(theta), np.cos(theta)]])
->>> # Apply the second rotation (rotating back)
->>> embedding.rotate(rotation_matrix)
->>> # Plot the second rotation for the second subplot
->>> plot_embedding_comparison(points_before, embedding.points, center, embedding.centroid(), 'Effect of Rotation', axs[1])
->>> plt.tight_layout()
->>> plt.show()
+rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)],
+                            [np.sin(theta), np.cos(theta)]])
+# Rotate the points in the embedding using the rotation matrix
+embedding.rotate(rotation_matrix)
+# Plot the original vs rotated points for the first subplot
+plot_embedding_comparison(points_before, embedding.points, center, embedding.centroid(), 'Effect of Rotation', axs[0])
+# Store the points after the first rotation
+points_before = embedding.points
+# Compute the centroid again (after rotation)
+center = embedding.centroid()
+# Define a rotation angle of -30 degrees (to rotate in the opposite direction)
+theta = np.radians(-30)
+# Create the 2D rotation matrix for the opposite rotation
+rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)],
+                            [np.sin(theta), np.cos(theta)]])
+# Apply the second rotation (rotating back)
+embedding.rotate(rotation_matrix)
+# Plot the second rotation for the second subplot
+plot_embedding_comparison(points_before, embedding.points, center, embedding.centroid(), 'Effect of Rotation', axs[1])
+plt.tight_layout()
+plt.show()
 ```
 
 <!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/rotation_poincare.png" alt="GitHub Logo" width="1000"/> -->
@@ -863,13 +863,12 @@ plt.show()
 ## Constructor and Attributes
 
 ```python
->>> def __init__(self,curvature: Optional[float] = -1, points: Optional[Union[np.ndarray, torch.Tensor]] = None, labels: Optional[List[Union[str, int]]] = None, enable_logging: Optional[bool] = False) -> None
+def __init__(self,curvature: Optional[float] = -1, points: Optional[Union[np.ndarray, torch.Tensor]] = None, labels: Optional[List[Union[str, int]]] = None) -> None
 ```
 
 - **curvature** (`float`): The curvature of the hyperbolic space (default is `-1`).
 - **points** (`torch.Tensor`): Points in the Loid space.
 - **labels** (`List[Union[str, int]]`): Optional labels for the points.
-- **enable_logging** (`bool`): Flag to enable logging.
 
 
 ## Methods
@@ -884,47 +883,47 @@ plt.show()
 This example demonstrates the initialization and manipulation of a hyperbolic embedding using the `LoidEmbedding` class. Points are generated with a specified dimensionality and associated labels, and the embedding is created in hyperbolic space with a default curvature of `-1`. Norms are computed to add an extra dimension, adjusting the points and embedding accordingly. Tensor operations ensure efficient updates to the point set, preserving the embedding’s properties.
 
 ```python
->>> from htree.embedding import LoidEmbedding
->>> import numpy as np
->>> # Number of points to embed and their dimensionality
->>> n_points = 10
->>> dimension = 3
->>> # Create labels for each point (as strings)
->>> labels = [str(i) for i in range(1,n_points+1)]
->>> # Generate random points with a small variance
->>> points = np.random.randn(dimension, n_points)
->>> # Add the extra dimension: sqrt(1 + norm(points)**2)
->>> norm_points = np.linalg.norm(points, axis=0)
->>> points = np.vstack([np.sqrt(1 + norm_points**2), points])
->>> # Initialize the Loid embedding with the updated points and labels
->>> embedding = LoidEmbedding(points=points, labels=labels)
+from htree.embedding import LoidEmbedding
+import numpy as np
+# Number of points to embed and their dimensionality
+n_points = 10
+dimension = 3
+# Create labels for each point (as strings)
+labels = [str(i) for i in range(1,n_points+1)]
+# Generate random points with a small variance
+points = np.random.randn(dimension, n_points)
+# Add the extra dimension: sqrt(1 + norm(points)**2)
+norm_points = np.linalg.norm(points, axis=0)
+points = np.vstack([np.sqrt(1 + norm_points**2), points])
+# Initialize the Loid embedding with the updated points and labels
+embedding = LoidEmbedding(points=points, labels=labels)
 HyperbolicEmbedding(curvature=-1.00, model=loid, points_shape=[4, 10])
->>> # Change the curvature of the embedding to -2
->>> embedding.curvature = -2
->>> print(embedding)
+# Change the curvature of the embedding to -2
+embedding.curvature = -2
+print(embedding)
 HyperbolicEmbedding(curvature=-2.00, model=loid, points_shape=[4, 10])
->>> # Get the Lorentzian norm (squared) of the embedding
->>> print(embedding._norm2())
+# Get the Lorentzian norm (squared) of the embedding
+print(embedding._norm2())
 tensor([-1.0000, -1.0000, -1.0000, -1.0000, -1.0000, -1.0000, -1.0000, -1.0000,
         -1.0000, -1.0000], dtype=torch.float64)
->>> # Get the dimensionality of the embedding (which is 3 for now)
->>> print(embedding.dimension)
+# Get the dimensionality of the embedding (which is 3 for now)
+print(embedding.dimension)
 3
->>> # Get the number of points in the embedding (10 points)
->>> print(embedding.n_points)
+# Get the number of points in the embedding (10 points)
+print(embedding.n_points)
 10
->>> import torch
->>> # Create a new set of points using a tensor (2-dimensional points, 4 total points)
->>> new_points = np.array([[-0.5, 0.5, 0.5, -0.5], [-0.5, 0.5, -0.5, 0.5]])
->>> norm_points = np.linalg.norm(new_points, axis=0)
->>> new_points = np.vstack([np.sqrt(1 + norm_points**2), new_points])
->>> # Update the embedding points with the new tensor
->>> embedding.points = new_points
->>> # Check the new dimensionality (should be 2 after updating points)
->>> print(embedding.dimension)
+import torch
+# Create a new set of points using a tensor (2-dimensional points, 4 total points)
+new_points = np.array([[-0.5, 0.5, 0.5, -0.5], [-0.5, 0.5, -0.5, 0.5]])
+norm_points = np.linalg.norm(new_points, axis=0)
+new_points = np.vstack([np.sqrt(1 + norm_points**2), new_points])
+# Update the embedding points with the new tensor
+embedding.points = new_points
+# Check the new dimensionality (should be 2 after updating points)
+print(embedding.dimension)
 2
->>> # Check the new number of points (should be 4 after updating points)
->>> print(embedding.n_points)
+# Check the new number of points (should be 4 after updating points)
+print(embedding.n_points)
 4
 ```
 
