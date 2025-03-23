@@ -337,28 +337,28 @@ The `MultiTree` class offers a versatile framework for managing multiple phyloge
 The `MultiTree` class can be initialized from a variety of sources, including file paths, lists of trees of named trees, lists of trees from `treeswift`. 
 
 ```python
->>> from htree.tree_collections import MultiTree
->>> # Initialize from a Newick file
->>> multitree = MultiTree("path/to/trees.tre")
->>> print(multitree)
+from htree.tree_collections import MultiTree
+# Initialize from a Newick file
+multitree = MultiTree("path/to/trees.tre")
+print(multitree)
 MultiTree(trees.tre, 844 trees)
->>> # Initialize from a list of trees
->>> import treeswift as ts
->>> tree1 = ts.read_tree_newick("path/to/treefile1.tre")
->>> tree2 = ts.read_tree_newick("path/to/treefile2.tre")
->>> tree_list = [tree1, tree2]  # List of trees
->>> multitree = MultiTree('mytrees', tree_list)
->>> print(multitree)
+# Initialize from a list of trees
+import treeswift as ts
+tree1 = ts.read_tree_newick("path/to/treefile1.tre")
+tree2 = ts.read_tree_newick("path/to/treefile2.tre")
+tree_list = [tree1, tree2]  # List of trees
+multitree = MultiTree('mytrees', tree_list)
+print(multitree)
 MultiTree(mytrees, 2 trees)
->>> print(multitree.trees)
+print(multitree.trees)
 [Tree(Tree_0), Tree(Tree_1)]
->>> # Initialize from a list of named trees
->>> from htree.tree_collections import Tree
->>> named_trees = [Tree('a', tree1), Tree('b', tree2)]
->>> multitree = MultiTree('mTree', named_trees)
->>> print(multitree)
+# Initialize from a list of named trees
+from htree.tree_collections import Tree
+named_trees = [Tree('a', tree1), Tree('b', tree2)]
+multitree = MultiTree('mTree', named_trees)
+print(multitree)
 MultiTree(mTree, 2 trees)
->>> print(multitree.trees)
+print(multitree.trees)
 [Tree(a), Tree(b)]
 ```
 Once initialized, the `MultiTree` object provides methods for tree embedding, saving, and distance matrix computation.
@@ -366,9 +366,11 @@ Once initialized, the `MultiTree` object provides methods for tree embedding, sa
 ## Logging Feature
 Enable logging for detailed tracking of actions and errors during the `MultiTree` operations. When enabled, logs will be written to a file with a timestamp in the filename.
 ```python
->>> # Initialize with logging enabled
->>> multitree = MultiTree("path/to/trees.tre", enable_logging=True)
->>> print(multitree)
+# Initialize with logging enabled
+import htree.logger as logger
+logger.set_logger(True)
+multitree = MultiTree("path/to/trees.tre")
+print(multitree)
 MultiTree(trees.tre, 844 trees)
 ```
 Logs can be useful for debugging and provide insights into the tree loading, embedding, and saving processes.
