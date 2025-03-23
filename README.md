@@ -610,26 +610,26 @@ plt.show()
 The `center` method centers the points in Euclidean space by subtracting the `centroid` from each point. This operation shifts the points so that their `centroid` becomes the origin. The `centroid` method computes the geometric center of the points in Euclidean space by calculating the mean of each dimension.
 
 ```python
->>> # updating points
->>> new_points = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
->>> embedding.points = new_points  # This will automatically update dimensions and other attributes.
->>> print(embedding.points)
+# updating points
+new_points = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+embedding.points = new_points  # This will automatically update dimensions and other attributes.
+print(embedding.points)
 tensor([[1., 2., 3.],
         [4., 5., 6.]], dtype=torch.float64)
->>> print(embedding.centroid())
+print(embedding.centroid())
 tensor([2., 5.], dtype=torch.float64)
->>> embedding.center()
->>> print(embedding.points)
+embedding.center()
+print(embedding.points)
 tensor([[-1.,  0.,  1.],
         [-1.,  0.,  1.]], dtype=torch.float64)
->>> print(embedding.centroid())
+print(embedding.centroid())
 tensor([0., 0.], dtype=torch.float64)
 ```
 The `distance_matrix` method computes the pairwise Euclidean distances between all points in the embedding. This results in a symmetric matrix where each element at position `(i, j)` represents the distance between point `i` and point `j`.
 
 ```python
->>> distance_matrix = embedding.distance_matrix()
->>> print(distance_matrix)
+distance_matrix,labels = embedding.distance_matrix()
+print(distance_matrix)
 tensor([[0.0000, 1.4142, 2.8284],
         [1.4142, 0.0000, 1.4142],
         [2.8284, 1.4142, 0.0000]], dtype=torch.float64)
@@ -671,13 +671,12 @@ The `PoincareEmbedding` class represents a hyperbolic embedding space using the 
 ## Constructor and Attributes
 
 ```python
-def __init__(self, curvature: Optional[float] = -1, points: Optional[Union[np.ndarray, torch.Tensor]] = None, labels: Optional[List[Union[str, int]]] = None, enable_logging: bool = False) -> None
+def __init__(self, curvature: Optional[float] = -1, points: Optional[Union[np.ndarray, torch.Tensor]] = None, labels: Optional[List[Union[str, int]]] = None) -> None
 ```
 
 - **curvature** (`float`): The curvature of the hyperbolic space (default is `-1`).
 - **points** (`torch.Tensor`): Points in the Poincare space.
 - **labels** (`List[Union[str, int]]`): Optional labels for the points.
-- **enable_logging** (`bool`): Flag to enable logging.
 
 The constructor initializes the embedding in Poincare space and checks the point norms to ensure they adhere to the Poincare constraints.
 
@@ -695,39 +694,39 @@ The constructor initializes the embedding in Poincare space and checks the point
 This example illustrates the initialization and manipulation of a hyperbolic embedding using the `PoincareEmbedding` class. A set of points is first generated with a specified dimensionality and associated labels. The embedding is created in hyperbolic space with the default curvature of `-1`. The process includes computing norms of the embedded points and updating the points themselves, which automatically adjusts the embedding's dimensionality and size. The use of tensors allows for seamless updates to the point set, maintaining the consistency of the embedding's properties.
 
 ```python
->>> from htree.embedding import PoincareEmbedding
->>> import numpy as np
->>> # Number of points to embed and their dimensionality
->>> n_points = 10
->>> dimension = 3
->>> # Create labels for each point (as strings)
->>> labels = [str(i) for i in range(1,n_points+1)]
->>> # Generate random points with a small variance
->>> points = np.random.randn(dimension,n_points)/10
->>> # Initialize the Poincare embedding with the generated points and labels
->>> embedding = PoincareEmbedding(points = points, labels = labels)
->>> print(embedding)
+from htree.embedding import PoincareEmbedding
+import numpy as np
+# Number of points to embed and their dimensionality
+n_points = 10
+dimension = 3
+# Create labels for each point (as strings)
+labels = [str(i) for i in range(1,n_points+1)]
+# Generate random points with a small variance
+points = np.random.randn(dimension,n_points)/10
+# Initialize the Poincare embedding with the generated points and labels
+embedding = PoincareEmbedding(points = points, labels = labels)
+print(embedding)
 HyperbolicEmbedding(curvature=-1.00, model=poincare, points_shape=[3, 10])
->>> # Change the curvature of the embedding to -2
->>> embedding.curvature = -2
->>> print(embedding)
+# Change the curvature of the embedding to -2
+embedding.curvature = -2
+print(embedding)
 HyperbolicEmbedding(curvature=-2.00, model=poincare, points_shape=[3, 10])
->>> # Get the dimensionality of the embedding (which is 3 for now)
->>> print(embedding.dimension)
+# Get the dimensionality of the embedding (which is 3 for now)
+print(embedding.dimension)
 3
->>> # Get the number of points in the embedding (10 points)
->>> print(embedding.n_points)
+# Get the number of points in the embedding (10 points)
+print(embedding.n_points)
 10
->>> import torch
->>> # Create a new set of points using a tensor (2-dimensional points, 4 total points)
->>> new_points = torch.tensor([[-0.5, 0.5, 0.5, -0.5], [-0.5, 0.5, -0.5, 0.5]])
->>> # Update the embedding points with the new tensor
->>> embedding.points = new_points
->>> # Check the new dimensionality (should be 2 after updating points)
->>> print(embedding.dimension)
+import torch
+# Create a new set of points using a tensor (2-dimensional points, 4 total points)
+new_points = torch.tensor([[-0.5, 0.5, 0.5, -0.5], [-0.5, 0.5, -0.5, 0.5]])
+# Update the embedding points with the new tensor
+embedding.points = new_points
+# Check the new dimensionality (should be 2 after updating points)
+print(embedding.dimension)
 2
->>> # Check the new number of points (should be 4 after updating points)
->>> print(embedding.n_points)
+# Check the new number of points (should be 4 after updating points)
+print(embedding.n_points)
 4
 ```
 
@@ -735,31 +734,31 @@ HyperbolicEmbedding(curvature=-2.00, model=poincare, points_shape=[3, 10])
 This section demonstrates the functionality of key methods in the `PoincareEmbedding` or `HyperbolicSpace` class, focusing on distance calculations, centering the embedding, computing the centroid, switching models, and converting to the Loid model.
 
 ```python
->>> # Compute the distance matrix between all points in the embedding
->>> print(embedding.distance_matrix())
+# Compute the distance matrix between all points in the embedding
+print(embedding.distance_matrix()[0])
 tensor([[0.0000, 2.4929, 2.0416, 2.0416],  
         [2.4929, 0.0000, 2.0416, 2.0416],  
         [2.0416, 2.0416, 0.0000, 2.4929], 
         [2.0416, 2.0416, 2.4929, 0.0000]], dtype=torch.float64)
->>> # Change the curvature of the embedding to -0.5 and observe how the distance matrix changes
->>> # Distances scale with 1 / sqrt(-curvature), so as curvature becomes shallower (closer to 0), distances increase.
->>> embedding.curvature = -0.5
->>> print(embedding.distance_matrix())
+# Change the curvature of the embedding to -0.5 and observe how the distance matrix changes
+# Distances scale with 1 / sqrt(-curvature), so as curvature becomes shallower (closer to 0), distances increase.
+embedding.curvature = -0.5
+print(embedding.distance_matrix()[0])
 tensor([[0.0000, 4.9858, 4.0832, 4.0832],  # Distances increase due to the scaling effect of the curvature
         [4.9858, 0.0000, 4.0832, 4.0832],
         [4.0832, 4.0832, 0.0000, 4.9858],
         [4.0832, 4.0832, 4.9858, 0.0000]], dtype=torch.float64)
->>> # Compute the centroid of the points in the embedding (default mode)
->>> print(embedding.centroid())
+# Compute the centroid of the points in the embedding (default mode)
+print(embedding.centroid())
 tensor([[0.],  # The centroid lies at the origin in this case
         [0.]], dtype=torch.float64)
->>> # Compute the centroid using the Frechet mode, which applies a different calculation
->>> print(embedding.centroid(mode = 'Frechet'))
+# Compute the centroid using the Frechet mode, which applies a different calculation
+print(embedding.centroid(mode = 'Frechet'))
 tensor([[0.],
         [0.]], dtype=torch.float64)
->>> # Switch the model from Poincare to Loid, transforming the points accordingly
->>> loid_embedding = embedding.switch_model()
->>> print(loid_embedding)
+# Switch the model from Poincare to Loid, transforming the points accordingly
+loid_embedding = embedding.switch_model()
+print(loid_embedding)
 HyperbolicEmbedding(curvature=-0.50, model=loid, points_shape=[3, 4])  # Model switched to 'loid'
 ```
 
@@ -767,55 +766,55 @@ HyperbolicEmbedding(curvature=-0.50, model=loid, points_shape=[3, 4])  # Model s
 This section demonstrates the functionality of key methods in the `PoincareEmbedding` or `HyperbolicSpace` class, focusing on distance calculations, translating and rotating the embedding, as well as the centering.
 
 ```python
->>> # Function to plot embeddings before and after a transformation
->>> def plot_embedding_comparison(points_before, points_after, center_before, center_after, title, ax):
->>>     # Plot Poincaré unit circle (domain) in black
->>>     theta = np.linspace(0, 2 * np.pi, 100)
->>>     circle_x = np.sin(theta)
->>>     circle_y = np.cos(theta)
->>>     ax.plot(circle_x, circle_y, 'k-')
->>>     ax.scatter(points_before[0, :], points_before[1, :], color='blue', label='Before', edgecolor='k')
->>>     ax.scatter(points_after[0, :], points_after[1, :], color='red', label='After', edgecolor='k')
->>>     ax.scatter(center_before[0], center_before[1], color='blue', marker='x', s=100, label='Center')
->>>     ax.scatter(center_after[0], center_after[1], color='red', marker='x', s=100, label='Center')
->>>     ax.set_title(title)
->>>     ax.set_aspect('equal')
->>>     ax.legend()
->>> # Get the current points from the embedding
->>> points = embedding.points
->>> # Compute the centroid of the embedding before any transformation
->>> center = embedding.centroid()
->>> # Get the current points from the embedding
->>> points = embedding.points
->>> # # Compute the centroid of the embedding before any transformation
->>> center = embedding.centroid()
->>> # Define a translation vector to shift the embedding points
->>> translation_vector = np.array([0.25, -0.75])
->>> embedding.translate(translation_vector)
->>> # The embedding now has updated points, reflecting the translation
+# Function to plot embeddings before and after a transformation
+def plot_embedding_comparison(points_before, points_after, center_before, center_after, title, ax):
+    # Plot Poincaré unit circle (domain) in black
+    theta = np.linspace(0, 2 * np.pi, 100)
+    circle_x = np.sin(theta)
+    circle_y = np.cos(theta)
+    ax.plot(circle_x, circle_y, 'k-')
+    ax.scatter(points_before[0, :], points_before[1, :], color='blue', label='Before', edgecolor='k')
+    ax.scatter(points_after[0, :], points_after[1, :], color='red', label='After', edgecolor='k')
+    ax.scatter(center_before[0], center_before[1], color='blue', marker='x', s=100, label='Center')
+    ax.scatter(center_after[0], center_after[1], color='red', marker='x', s=100, label='Center')
+    ax.set_title(title)
+    ax.set_aspect('equal')
+    ax.legend()
+# Get the current points from the embedding
+points = embedding.points
+# Compute the centroid of the embedding before any transformation
+center = embedding.centroid()
+# Get the current points from the embedding
+points = embedding.points
+# # Compute the centroid of the embedding before any transformation
+center = embedding.centroid()
+# Define a translation vector to shift the embedding points
+translation_vector = np.array([0.25, -0.75])
+embedding.translate(translation_vector)
+# The embedding now has updated points, reflecting the translation
 HyperbolicEmbedding(curvature=-0.5, model=poincare, points_shape=[2, 4])
->>> # Translation is a distance-preserving map, so distances between points should remain consistent
->>> print(embedding.distance_matrix())
+# Translation is a distance-preserving map, so distances between points should remain consistent
+print(embedding.distance_matrix())
 tensor([[0.0000, 4.9858, 4.0832, 4.0832],
         [4.9858, 0.0000, 4.0832, 4.0832],
         [4.0832, 4.0832, 0.0000, 4.9858],
         [4.0832, 4.0832, 4.9858, 0.0000]], dtype=torch.float64)
->>> fig, axs = plt.subplots(1, 2, figsize=(14, 7))
->>> # Plot the effect of translation on the embedding
->>> plot_embedding_comparison(points, embedding.points, center, embedding.centroid(), 'Effect of Translation', axs[0])
->>> # Get the updated points after translation
->>> points = embedding.points
->>> center = embedding.centroid()
->>> # Return the centroid of the embedding (affected by the translation)
->>> print(embedding.centroid())
+fig, axs = plt.subplots(1, 2, figsize=(14, 7))
+# Plot the effect of translation on the embedding
+plot_embedding_comparison(points, embedding.points, center, embedding.centroid(), 'Effect of Translation', axs[0])
+# Get the updated points after translation
+points = embedding.points
+center = embedding.centroid()
+# Return the centroid of the embedding (affected by the translation)
+print(embedding.centroid())
 tensor([[ 0.2500],
         [-0.7500]], dtype=torch.float64)
->>> # Move the points to their centroid
->>> embedding.center()
->>> # Plot for centering operations
->>> plot_embedding_comparison(points, embedding.points, center, embedding.centroid(), 'Effect of Centering', axs[1])
->>> plt.tight_layout()
->>> plt.show()
+# Move the points to their centroid
+embedding.center()
+# Plot for centering operations
+plot_embedding_comparison(points, embedding.points, center, embedding.centroid(), 'Effect of Centering', axs[1])
+plt.tight_layout()
+plt.show()
 ```
 
 
