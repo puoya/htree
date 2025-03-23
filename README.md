@@ -416,38 +416,38 @@ print(multitree.terminal_names()[:4])
 
 The `embed` method in `MultiTree` allows you to **jointly** embed trees in a hyperbolic or Euclidean space, specifying the geometry, dimension, and other customizable parameters for optimization. It is flexible enough to handle both hyperbolic and Euclidean embeddings, with additional parameters like learning rate, total epochs, and scaling options. The method returns a `MultiEmbedding` object, which can be used for further analysis or visualization.
 ```python
->>> # Embed trees in a 2D hyperbolic space
->>> multiemb_hyperbolic = multitree.embed(dimension=2, geometry='hyperbolic')
->>> print(multiemb_hyperbolic)
+# Embed trees in a 2D hyperbolic space
+multiemb_hyperbolic = multitree.embed(dim=2, geometry='hyperbolic')
+print(multiemb_hyperbolic)
 MultiEmbedding(10 embeddings)
->>> print(multiemb_hyperbolic.embeddings)
+print(multiemb_hyperbolic.embeddings)
 [HyperbolicEmbedding(curvature=-0.84, model=loid, points_shape=[3, 24]), HyperbolicEmbedding(curvature=-0.84, model=loid, points_shape=[3, 76]), HyperbolicEmbedding(curvature=-0.84, model=loid, points_shape=[3, 71]), HyperbolicEmbedding(curvature=-0.84, model=loid, points_shape=[3, 70]), HyperbolicEmbedding(curvature=-0.84, model=loid, points_shape=[3, 63]), HyperbolicEmbedding(curvature=-0.84, model=loid, points_shape=[3, 80]), HyperbolicEmbedding(curvature=-0.84, model=loid, points_shape=[3, 60]), HyperbolicEmbedding(curvature=-0.84, model=loid, points_shape=[3, 76]), HyperbolicEmbedding(curvature=-0.84, model=loid, points_shape=[3, 82]), HyperbolicEmbedding(curvature=-0.84, model=loid, points_shape=[3, 51])]
->>> # Embed trees in a 3D Euclidean space
->>> multiemb_euclidean = multitree.embed(dimension=3, geometry='euclidean')
->>> print(multiemb_euclidean)
+# Embed trees in a 3D Euclidean space
+multiemb_euclidean = multitree.embed(dim=3, geometry='euclidean')
+print(multiemb_euclidean)
 MultiEmbedding(10 embeddings)
->>> print(multiemb_euclidean.embeddings)
+print(multiemb_euclidean.embeddings)
 [EuclideanEmbedding(points_shape=[3, 24]), EuclideanEmbedding(points_shape=[3, 76]), EuclideanEmbedding(points_shape=[3, 71]), EuclideanEmbedding(points_shape=[3, 70]), EuclideanEmbedding(points_shape=[3, 63]), EuclideanEmbedding(points_shape=[3, 80]), EuclideanEmbedding(points_shape=[3, 60]), EuclideanEmbedding(points_shape=[3, 76]), EuclideanEmbedding(points_shape=[3, 82]), EuclideanEmbedding(points_shape=[3, 51])]
 ```
 The `embed` method takes several key parameters that allow for fine-tuned control of the embedding process:
-- `dimension`: Specifies the number of dimensions for the embedding space (e.g., 2 for 2D or 3 for 3D).
+- `dim`: Specifies the number of dimensions for the embedding space (e.g., 2 for 2D or 3 for 3D).
 - `geometry`: Specifies whether the embedding should be in 'hyperbolic' or 'euclidean' space.
-- `accurate`: Controls the accuracy of the embedding process. This can be passed through kwargs or defaulted to the value in `conf.ENABLE_ACCURATE_OPTIMIZATION`.
-- `total_epochs`: The number of epochs (iterations) to run the optimization for embedding. It defaults to `conf.TOTAL_EPOCHS` but can be overridden.
-- `initial_lr`: The initial learning rate for the optimization process. It defaults to `conf.LEARNING_RATE_INIT`, but you can specify a custom value.
-- `max_diameter`: The maximum diameter for scaling the embeddings. This ensures the size of the embedding is bounded and defaults to `conf.MAX_RANGE`.
-- `enable_save`: If set to True, the embeddings will be saved automatically during the process. The default is taken from `conf.ENABLE_SAVE_MODE`.
-- `learning_rate`: Allows fine-tuning of the learning rate during the process. If not specified, the default learning rate (`initial_lr`) will be used.
-- `scale_learning`: Determines if scale learning should be enabled, which impacts how distances are scaled in the embedding space.
-- `weight_exponent`: Controls how weights are adjusted during optimization, potentially affecting the impact of different nodes' distances during learning.
+- `precise_opt`: Controls the accuracy of the embedding process. This can be passed through kwargs or defaulted to the value in `conf.ENABLE_ACCURATE_OPTIMIZATION`.
+- `epochs`: The number of epochs (iterations) to run the optimization for embedding. It defaults to `conf.TOTAL_EPOCHS` but can be overridden.
+- `lr_init`: The initial learning rate for the optimization process. It defaults to `conf.LEARNING_RATE_INIT`, but you can specify a custom value.
+- `dist_cutoff`: The maximum diameter for scaling the embeddings. This ensures the size of the embedding is bounded and defaults to `conf.MAX_RANGE`.
+- `save_mode`: If set to True, the embeddings will be saved automatically during the process. The default is taken from `conf.ENABLE_SAVE_MODE`.
+- `lr_fn`: Allows fine-tuning of the learning rate during the process. If not specified, the default learning rate (`lr_init`) will be used.
+- `scale_fn`: Determines if scale learning should be enabled, which impacts how distances are scaled in the embedding space.
+- `weight_exp_fn`: Controls how weights are adjusted during optimization, potentially affecting the impact of different nodes' distances during learning.
 
 Refer to the `Tree` class for detailed explanations and further usage examples.
 
 ## Saving Trees
 The `save` method allows you to save the trees in a file (default format is Newick).
 ```python
->>> # Save trees to a Newick file
->>> multitree.save("path/to/output.tre")
+# Save trees to a Newick file
+multitree.save("path/to/output.tre")
 ```
 
 # Embedding Class
