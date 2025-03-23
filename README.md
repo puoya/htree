@@ -1160,67 +1160,69 @@ The `HyperbolicProcrustes` class implements Hyperbolic orthogonal Procrustes ana
 ## Attributes
 - **source_embedding** (`Embedding`): An instance of the source embedding from which points are mapped.
 - **target_embedding** (`Embedding`): An instance of the target embedding to which points are mapped.
-- **mode** (`str`): If it is set to `accurate`, the model creates a more accurate mapping.
+- **precise_opt** (`bool`): If it is set to `True`, the model creates a more accurate mapping.
 - **logger** (`logging.Logger`): A logger for recording activities and events within the class, if logging is enabled.
 
 
 ## Constructor
 ```python
-HyperbolicProcrustes(source_embedding: 'Embedding', target_embedding: 'Embedding', mode: str = 'default')
+HyperbolicProcrustes(source_embedding: 'Embedding', target_embedding: 'Embedding', precise_opt: bool = False)
 ```
 
 ## Example: Initialization
 The following example illustrates how to initialize the HyperbolicProcrustes class with source and target embeddings, along with enabling logging during the initialization process.
 
 ```python
->>> from htree.procrustes import HyperbolicProcrustes
->>> from htree.embedding import PoincareEmbedding
->>> import numpy as np
->>> n_points = 10
->>> dimension = 2
->>> # Generate random points for the source embedding
->>> points = np.random.randn(dimension, n_points)/10
->>> # Initialize the source embedding
->>> source_embedding = PoincareEmbedding(points=points)
->>> print(source_embedding.points)
+from htree.procrustes import HyperbolicProcrustes
+from htree.embedding import PoincareEmbedding
+import numpy as np
+n_points = 10
+dimension = 2
+# Generate random points for the source embedding
+points = np.random.randn(dimension, n_points)/10
+# Initialize the source embedding
+source_embedding = PoincareEmbedding(points=points)
+print(source_embedding.points)
 tensor([[ 0.2135, -0.0119,  0.0454, -0.1136,  0.0334, -0.0786, -0.0686, -0.1149,
          -0.0842,  0.1199],
         [-0.0798,  0.0566,  0.1365,  0.0822, -0.0354, -0.1948, -0.1846,  0.0131,
          -0.0577,  0.0051]], dtype=torch.float64)
->>> # Create a target embedding by copying and transforming the source
->>> target_embedding = source_embedding.copy()
->>> translation_vector = np.random.randn(dimension)/4
->>> target_embedding.translate(translation_vector)
->>> theta = np.radians(27.5)
->>> rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)],[np.sin(theta), np.cos(theta)]])
->>> target_embedding.rotate(rotation_matrix)
->>> print(target_embedding.points)
+# Create a target embedding by copying and transforming the source
+target_embedding = source_embedding.copy()
+translation_vector = np.random.randn(dimension)/4
+target_embedding.translate(translation_vector)
+theta = np.radians(27.5)
+rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)],[np.sin(theta), np.cos(theta)]])
+target_embedding.rotate(rotation_matrix)
+print(target_embedding.points)
 tensor([[-0.4023, -0.5559, -0.5553, -0.6032, -0.5126, -0.5377, -0.5346, -0.5871,
          -0.5603, -0.4777],
         [-0.4450, -0.4259, -0.3731, -0.4428, -0.4570, -0.5466, -0.5412, -0.4689,
          -0.4906, -0.4155]], dtype=torch.float64)
->>> # Initialize the Procrustes model with the source and target embeddings
->>> model = HyperbolicProcrustes(source_embedding, target_embedding, enable_logging=True) # mode = 'default'
->>> # Map the source embedding to the target space
->>> source_aligned = model.map(source_embedding)
->>> print(source_aligned.points)
+# Initialize the Procrustes model with the source and target embeddings
+import htree.logger as logger
+logger.set_logger(True)
+model = HyperbolicProcrustes(source_embedding, target_embedding)
+# Map the source embedding to the target space
+source_aligned = model.map(source_embedding)
+print(source_aligned.points)
 tensor([[-0.4023, -0.5559, -0.5553, -0.6032, -0.5126, -0.5377, -0.5346, -0.5871,
          -0.5603, -0.4777],
         [-0.4450, -0.4259, -0.3731, -0.4428, -0.4570, -0.5466, -0.5412, -0.4689,
          -0.4906, -0.4155]], dtype=torch.float64)
->>> # Switch the model of the source embedding
->>> source_embedding  = source_embedding.switch_model()
->>> print(source_embedding)
+# Switch the model of the source embedding
+source_embedding  = source_embedding.switch_model()
+print(source_embedding)
 HyperbolicEmbedding(curvature=-1.00, model=loid, points_shape=[3, 10])
->>> print(source_embedding.points)
+print(source_embedding.points)
 tensor([[ 1.1096,  1.0067,  1.0423,  1.0401,  1.0047,  1.0923,  1.0807,  1.0271,
           1.0211,  1.0292],
         [ 0.4503, -0.0240,  0.0926, -0.2318,  0.0669, -0.1645, -0.1427, -0.2330,
          -0.1702,  0.2433],
         [-0.1684,  0.1135,  0.2788,  0.1676, -0.0709, -0.4075, -0.3840,  0.0266,
          -0.1167,  0.0103]], dtype=torch.float64)
->>> source_aligned = model.map(source_embedding)
->>> print(source_aligned.points)
+source_aligned = model.map(source_embedding)
+print(source_aligned.points)
 tensor([[-0.4023, -0.5559, -0.5553, -0.6032, -0.5126, -0.5377, -0.5346, -0.5871,
          -0.5603, -0.4777],
         [-0.4450, -0.4259, -0.3731, -0.4428, -0.4570, -0.5466, -0.5412, -0.4689,
@@ -1234,39 +1236,37 @@ In this example, we demonstrate the process of creating and transforming embeddi
 We now demonstrates the effect of adding Gaussian noise to the target embedding (in Poincare domain) and evaluating the alignment quality as noise increases. 
 
 ```python
->>> import matplotlib.pyplot as plt
->>> # Define a trivial function to compute the alignment cost
->>> def compute_alignment_cost(src_embedding, trg_embedding):
->>>     cost = sum((torch.norm(src_embedding.points[:, n]- trg_embedding.points[:, n]))**2 for n in range(src_embedding.n_points))
->>>     return cost
->>> # Define noise variances
->>> noise_variances = np.linspace(0, .1, 1000)  # Variances from 0 to 1
->>> alignment_errors = []
->>> # Loop through different noise variances
->>> for noise_variance in noise_variances:
->>>     noisy_target_embedding = target_embedding.copy()
->>>     noisy_target_embedding.switch_model()
->>>     # Add Gaussian noise to the points with specified variance
->>>     noise = np.random.normal(0, np.sqrt(noise_variance), size=noisy_target_embedding.points.shape)
->>>     noisy_target_embedding.points += noise
->>>     noisy_target_embedding.switch_model()
->>>     # Apply Procrustes alignment
->>>     model = HyperbolicProcrustes(source_embedding, noisy_target_embedding, mode = 'default')
->>>     source_aligned = model.map(source_embedding)
->>>     alignment_error = np.mean(np.linalg.norm(source_aligned.points - noisy_target_embedding.points, axis=0))
->>>     alignment_errors.append(alignment_error)
->>> # Plot quality of embedding vs. noise variance
->>> plt.scatter(noise_variances, alignment_errors, marker='o')
->>> plt.xlabel('Noise Variance')
->>> plt.ylabel('Alignment Error')
->>> plt.title('Quality of Embedding vs. Noise Variance')
->>> plt.grid(True)
->>> plt.show()
+import matplotlib.pyplot as plt
+# Define a trivial function to compute the alignment cost
+def compute_alignment_cost(src_embedding, trg_embedding):
+    cost = sum((torch.norm(src_embedding.points[:, n]- trg_embedding.points[:, n]))**2 for n in range(src_embedding.n_points))
+    return cost
+# Define noise variances
+noise_variances = np.linspace(0, .1, 1000)  # Variances from 0 to 1
+alignment_errors = []
+# Loop through different noise variances
+for noise_variance in noise_variances:
+    noisy_target_embedding = target_embedding.copy()
+    noisy_target_embedding.switch_model()
+    # Add Gaussian noise to the points with specified variance
+    noise = np.random.normal(0, np.sqrt(noise_variance)/2, size=noisy_target_embedding.points.shape)
+    noisy_target_embedding.points += noise
+    noisy_target_embedding.switch_model()
+    # Apply Procrustes alignment
+    model = HyperbolicProcrustes(source_embedding, noisy_target_embedding, precise_opt=False)
+    source_aligned = model.map(source_embedding)
+    alignment_error = np.mean(np.linalg.norm(source_aligned.points - noisy_target_embedding.points, axis=0))
+    alignment_errors.append(alignment_error)
+# Plot quality of embedding vs. noise variance
+plt.scatter(noise_variances, alignment_errors, marker='o')
+plt.xlabel('Noise Variance')
+plt.ylabel('Alignment Error')
+plt.title('Quality of Embedding vs. Noise Variance')
+plt.grid(True)
+plt.show()
 ```
 
 This plot demonstrates how the alignment error increases as more noise is added to the target embedding, showing the robustness of the Procrustes analysis under varying levels of distortion.
-
-
 
 <!-- <img src="https://github.com/puoya/HyperTree/blob/main/images/hyperbolic_procrustes_random.png" alt="GitHub Logo" width="500"/> -->
 ![GitHub Logo](https://i.imgur.com/9x4kPIG.png)
@@ -1280,20 +1280,22 @@ The `MultiEmbedding` class is designed to manage and align multiple embeddings i
 ## Constructor and Attributes
 
 ```python
->>> def __init__(self,curvature: Optional[float] = -1, points: Optional[Union[np.ndarray, torch.Tensor]] = None, labels: Optional[List[Union[str, int]]] = None, enable_logging: Optional[bool] = False) -> None
+def __init__(self)
 ```
-
-## Attributes
-
-- **embeddings** (`float`): The curvature of the hyperbolic space (default is `-1`).
-- **enable_logging** (`bool`): A flag to enable or disable logging functionality for debugging and progress tracking.
 
 
 ## Methods
-- **`add_embedding(embedding: 'Embedding')`**: Adds an embedding to the end of the collection.
+- **`append(embedding: 'Embedding')`**: Adds an embedding to the end of the collection.
 - **`align(agg_func = torch.nanmean, mode = 'accurate')`**: Aligns all embeddings by adjusting them to a reference embedding computed by averaging their distance matrices.
+  + `precise_opt`: See `embed` method in class `Tree`.
+  + `epochs`: See `embed` method in class `Tree`.
+  + `lr_init`: See `embed` method in class `Tree`.
+  + `dist_cutoff`: See `embed` method in class `Tree`.
+  + `save_mode`: See `embed` method in class `Tree`.
+  + `scale_fn`: See `embed` method in class `Tree`.
+  + `lr_fn`: See `embed` method in class `Tree`.
+  + `weight_exp_fn`: See `embed` method in class `Tree`.
   + `func`: A function to compute the aggregate distance matrix (default is `torch.nanmean`).
-  + `mode`: Alignment mode (e.g., `accurate`).
 -  **`distance_matrix(func: Callable[[torch.Tensor], torch.Tensor] = torch.nanmean)`**: Computes the aggregated distance matrix from all embeddings, replacing any missing values with estimates.
 -  **`reference_embedding(func: Callable[[torch.Tensor], torch.Tensor] = torch.nanmean, **kwargs)`**: Generates a reference embedding based on the average (using function `func) distance matrix of all embeddings. For other variables, refer to `embed` method in class `Tree`.
 
@@ -1302,61 +1304,61 @@ The following example demonstrates how to initialize the `MultiEmbedding` class,
 
 
 ```python
->>> from htree.embedding import MultiEmbedding
->>> from htree.embedding import EuclideanEmbedding
->>> import numpy as np
->>> import torch
->>> # Initialize a MultiEmbedding object
->>> multi_embedding = MultiEmbedding()
->>> # Create and add multiple embeddings
->>> n_points = 10
->>> dimension = 2
->>> labels = [str(i) for i in range(n_points)]
->>> points = np.random.randn(dimension,n_points)/10
->>> embedding1 = EuclideanEmbedding(points = points, labels = labels)
->>> print(embedding1)
+from htree.embedding import MultiEmbedding
+from htree.embedding import EuclideanEmbedding
+import numpy as np
+import torch
+# Initialize a MultiEmbedding object
+multi_embedding = MultiEmbedding()
+# Create and add multiple embeddings
+n_points = 10
+dimension = 2
+labels = [str(i) for i in range(n_points)]
+points = np.random.randn(dimension,n_points)/10
+embedding1 = EuclideanEmbedding(points = points, labels = labels)
+print(embedding1)
 EuclideanEmbedding(points_shape=[2, 10])
->>> multi_embedding.add_embedding(embedding1)
->>> # Add another embedding with different dimensions
->>> labels = [str(i) for i in range(14)]
->>> points = np.random.randn(4,14)/10
->>> embedding2 = EuclideanEmbedding(points = points, labels = labels)
->>> print(embedding2)
+multi_embedding.append(embedding1)
+# Add another embedding with different dimensions
+labels = [str(i) for i in range(14)]
+points = np.random.randn(4,14)/10
+embedding2 = EuclideanEmbedding(points = points, labels = labels)
+print(embedding2)
 EuclideanEmbedding(points_shape=[4, 14])
->>> multi_embedding.add_embedding(embedding2)
->>> labels = [str(i) for i in range(5)]
->>> points = np.random.randn(3,5)/10
->>> embedding3 = EuclideanEmbedding(points = points, labels = labels)
+multi_embedding.append(embedding2)
+labels = [str(i) for i in range(5)]
+points = np.random.randn(3,5)/10
+embedding3 = EuclideanEmbedding(points = points, labels = labels)
 print(embedding3)
 EuclideanEmbedding(points_shape=[3, 5])
->>> multi_embedding.add_embedding(embedding3)
->>> labels = [str(i) for i in range(7)]
->>> points = np.random.randn(4,7)/10
->>> embedding4 = EuclideanEmbedding(points = points, labels = labels)
->>> print(embedding4)
+multi_embedding.append(embedding3)
+labels = [str(i) for i in range(7)]
+points = np.random.randn(4,7)/10
+embedding4 = EuclideanEmbedding(points = points, labels = labels)
+print(embedding4)
 EuclideanEmbedding(points_shape=[4, 7])
->>> multi_embedding.add_embedding(embedding4)
->>> print(multi_embedding)
+multi_embedding.append(embedding4)
+print(multi_embedding)
 MultiEmbedding(4 embeddings)
->>> # Check the embeddings dictionary
->>> print(multi_embedding.embeddings)
+# Check the embeddings dictionary
+print(multi_embedding.embeddings)
 [EuclideanEmbedding(points_shape=[2, 10]),EuclideanEmbedding(points_shape=[4, 14]), EuclideanEmbedding(points_shape=[3, 5]), EuclideanEmbedding(points_shape=[4, 7])]
->>> # another way of initialization the multiembedding
->>> multi_embedding = MultiEmbedding()
->>> multi_embedding.embeddings = [embedding1, embedding2, embedding3, embedding4]
->>> print(multi_embedding.embeddings)
+# another way of initialization the multiembedding
+multi_embedding = MultiEmbedding()
+multi_embedding.embeddings = [embedding1, embedding2, embedding3, embedding4]
+print(multi_embedding.embeddings)
 [EuclideanEmbedding(points_shape=[2, 10]), EuclideanEmbedding(points_shape=[4, 14]), EuclideanEmbedding(points_shape=[3, 5]), EuclideanEmbedding(points_shape=[4, 7])]
->>> # computing the aggregate distance matrix over the union of labels
->>> print(multi_embedding.distance_matrix().shape)
+# computing the aggregate distance matrix over the union of labels
+print(multi_embedding.distance_matrix()[0].shape)
 torch.Size([14, 14])
->>> # Compute the aggregated distance matrix
->>> print(multi_embedding.distance_matrix()[:4,:4]) # defualt aggregation method is mean
+# Compute the aggregated distance matrix
+print(multi_embedding.distance_matrix()[0][:4,:4]) # defualt aggregation method is mean
 tensor([[0.0000, 0.2846, 0.3471, 0.2391],
         [0.2846, 0.0000, 0.4289, 0.2696],
         [0.3471, 0.4289, 0.0000, 0.2342],
         [0.2391, 0.2696, 0.2342, 0.0000]], dtype=torch.float64)
->>> # Using a different aggregation function (e.g., torch.nanmedian)
->>> print(multi_embedding.distance_matrix(func = torch.nanmedian)[:4,:4])
+# Using a different aggregation function (e.g., torch.nanmedian)
+print(multi_embedding.distance_matrix(func = torch.nanmedian)[0][:4,:4])
 tensor([[0.0000, 0.2747, 0.3471, 0.2391],
         [0.2747, 0.0000, 0.4289, 0.2696],
         [0.3471, 0.4289, 0.0000, 0.2342],
