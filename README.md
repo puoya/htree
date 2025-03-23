@@ -1369,68 +1369,68 @@ tensor([[0.0000, 0.2747, 0.3471, 0.2391],
 This section demonstrates how to compute a reference embedding using the `MultiTree` class and the `MultiEmbedding` class. The example illustrates how to load trees from Newick files, create embeddings for these trees, and calculate a reference embedding based on the average distance matrix across all embeddings.
 
 ```python
->>> # Load trees from Newick files
->>> from htree.tree_collections import MultiTree
->>> import treeswift as ts
->>> tree1 = ts.read_tree_newick('path/to/treefile1.tre')
->>> tree2 = ts.read_tree_newick('path/to/treefile2.tre')
->>> # Create a MultiTree object
->>> multitree = MultiTree('name', [tree1, tree2])
->>> print(multitree)
+# Load trees from Newick files
+from htree.tree_collections import MultiTree
+import treeswift as ts
+tree1 = ts.read_tree_newick('path/to/treefile1.tre')
+tree2 = ts.read_tree_newick('path/to/treefile2.tre')
+# Create a MultiTree object
+multitree = MultiTree('name', [tree1, tree2])
+print(multitree)
 MultiTree(name, 2 trees)
->>> # Print the first 4x4 section of the average distance matrix from the trees
->>> print(multitree.distance_matrix()[:4,:4])
+# Print the first 4x4 section of the average distance matrix from the trees
+print(multitree.distance_matrix()[0][:4,:4])
 tensor([[0.0000, 2.2280, 1.6060, 0.9966],
         [2.2280, 0.0000, 2.5171, 1.8496],
         [1.6060, 2.5171, 0.0000, 2.0671],
         [0.9966, 1.8496, 2.0671, 0.0000]])
->>> # Create joint embeddings for the trees in 2-dimensional hyperbolic space
->>> multiembedding = multitree.embed(dimension = 2)
->>> print(multiembedding)
+# Create joint embeddings for the trees in 2-dimensional hyperbolic space
+multiembedding = multitree.embed(dim = 2)
+print(multiembedding)
 MultiEmbedding(2 embeddings)
->>> # View the embeddings for each tree
->>> print(multiembedding.embeddings)
+# View the embeddings for each tree
+print(multiembedding.embeddings)
 [HyperbolicEmbedding(curvature=-8.92, model=loid, points_shape=[3, 30]), HyperbolicEmbedding(curvature=-8.92, model=loid, points_shape=[3, 14])]
->>> # Show the first 4x4 section of the distance matrix from the embeddings
->>> print(multiembedding.distance_matrix()[:4,:4]) # hyperbolic distances are used to approxiate tree distances
+# Show the first 4x4 section of the distance matrix from the embeddings
+print(multiembedding.distance_matrix()[0][:4,:4]) # hyperbolic distances are used to approxiate tree distances
 tensor([[5.9791e-08, 2.1971e+00, 2.9019e-01, 6.6652e-02],
         [2.1971e+00, 1.3717e-08, 2.4854e+00, 1.2870e+00],
         [2.9019e-01, 2.4854e+00, 0.0000e+00, 1.4410e+00],
         [6.6652e-02, 1.2870e+00, 1.4410e+00, 0.0000e+00]], dtype=torch.float64)
->>> reference = multiembedding.reference_embedding() # compute the reference point set by embedding the average distance matrix
->>> print(reference)
+reference = multiembedding.reference_embedding() # compute the reference point set by embedding the average distance matrix
+print(reference)
 HyperbolicEmbedding(curvature=-8.92, model=loid, points_shape=[3, 40])
->>> print( reference.distance_matrix()[:4,:4]) # Show the distance matrix of the reference embedding
+print( reference.distance_matrix()[0][:4,:4]) # Show the distance matrix of the reference embedding
 tensor([[0.0000, 2.0969, 3.1035, 1.4822],
         [2.0969, 0.0000, 2.3563, 1.9331],
         [3.1035, 2.3563, 0.0000, 3.1467],
         [1.4822, 1.9331, 3.1467, 0.0000]], dtype=torch.float64)
->>> reference = multiembedding.reference_embedding(accurate = True) # Compute a more accurate reference embedding
->>> print(reference)
+reference = multiembedding.reference_embedding(precise_opt=True) # Compute a more accurate reference embedding
+print(reference)
 HyperbolicEmbedding(curvature=-8.92, model=loid, points_shape=[3, 40])
->>> print( reference.distance_matrix()[:4,:4]) # Show the more accurate distance matrix of the reference embedding
+print( reference.distance_matrix()[0][:4,:4]) # Show the more accurate distance matrix of the reference embedding
 tensor([[0.0000e+00, 1.5942e+00, 2.6063e+00, 4.3736e-01],
         [1.5942e+00, 0.0000e+00, 2.1983e+00, 1.5878e+00],
         [2.6063e+00, 2.1983e+00, 0.0000e+00, 2.4947e+00],
         [4.3736e-01, 1.5878e+00, 2.4947e+00, 7.9983e-08]], dtype=torch.float64)
->>> multiembedding = multitree.embed(dimension = 2, accurate = True) # Recompute embeddings in hyperbolic space with more accuracy
->>> print(multiembedding)
+multiembedding = multitree.embed(dimension = 2, precise_opt=True) # Recompute embeddings in hyperbolic space with more accuracy
+print(multiembedding)
 MultiEmbedding(2 embeddings)
->>> print(multiembedding.embeddings) # View the embeddings with updated curvature
+print(multiembedding.embeddings) # View the embeddings with updated curvature
 [HyperbolicEmbedding(curvature=-8.30, model=loid, points_shape=[3, 30]), HyperbolicEmbedding(curvature=-8.30, model=loid, points_shape=[3, 14])]
->>> # embedding trees in euclidean space
->>> multiembedding = multitree.embed(dimension = 2, geometry = 'euclidean')
->>> print(multiembedding.embeddings)
+# embedding trees in euclidean space
+multiembedding = multitree.embed(dim = 2, geometry = 'euclidean')
+print(multiembedding.embeddings)
 [EuclideanEmbedding(points_shape=[2, 30]), EuclideanEmbedding(points_shape=[2, 14])]
->>> print((multiembedding.distance_matrix()[:4,:4])**2) # Compute the squared Euclidean distance matrix (used to approximate tree distances)
+print((multiembedding.distance_matrix()[0][:4,:4])**2) # Compute the squared Euclidean distance matrix (used to approximate tree distances)
 tensor([[0.0000, 0.9731, 0.0194, 0.0064],
         [0.9731, 0.0000, 0.7350, 0.3536],
         [0.0194, 0.7350, 0.0000, 0.4402],
         [0.0064, 0.3536, 0.4402, 0.0000]], dtype=torch.float64)
->>> reference = multiembedding.reference_embedding(accurate = True)
->>> print(reference)
+reference = multiembedding.reference_embedding(precise_opt=True)
+print(reference)
 EuclideanEmbedding(points_shape=[2, 40])
->>> print((reference.distance_matrix()[:4,:4])**2) # Show the squared distance matrix of the reference embedding
+print((reference.distance_matrix()[0][:4,:4])**2) # Show the squared distance matrix of the reference embedding
 tensor([[0.0000, 0.8788, 0.3246, 0.2431],
         [0.8788, 0.0000, 0.5642, 0.3351],
         [0.3246, 0.5642, 0.0000, 0.5179],
@@ -1445,24 +1445,24 @@ This section demonstrates how to align all embeddings to a reference embedding u
 
 
 ```python
->>> tree1 = ts.read_tree_newick('path/to/treefile1.tre')
->>> tree2 = ts.read_tree_newick('path/to/treefile2.tre')
->>> multitree = MultiTree('name', [tree1, tree2])
->>> multiembedding = multitree.embed(dimension = 2)
->>> print(multiembedding)
+tree1 = ts.read_tree_newick('path/to/treefile1.tre')
+tree2 = ts.read_tree_newick('path/to/treefile2.tre')
+multitree = MultiTree('name', [tree1, tree2])
+multiembedding = multitree.embed(dim = 2)
+print(multiembedding)
 MultiEmbedding(2 embeddings)
->>> print(multiembedding.embeddings)
+print(multiembedding.embeddings)
 [HyperbolicEmbedding(curvature=-8.92, model=loid, points_shape=[3, 30]), HyperbolicEmbedding(curvature=-8.92, model=loid, points_shape=[3, 14])]
 ```
 
 Here, we print the first four points of each embedding before aligning (note that the order of the points is arbitrary):
 
 ```python
->>> print(multiembedding.embeddings[0].points[:,:4]) # the first four points before aligning (order of the points is arbitrary)
+print(multiembedding.embeddings[0].points[:,:4]) # the first four points before aligning (order of the points is arbitrary)
 tensor([[ 1.8779,  6.8740, 20.4146, 16.8991],
         [ 1.5193,  6.8006, 20.3888, 16.8672],
         [-0.4671,  0.0672,  0.2263,  0.2766]], dtype=torch.float64)
->>> print(multiembedding.embeddings[1].points[:,:4])
+print(multiembedding.embeddings[1].points[:,:4])
 tensor([[33.2544, 22.6192, 18.7582, 20.1998],
         [33.2352, 22.5944, 18.7295, 20.1728],
         [-0.5295, -0.3507, -0.2774, -0.2990]], dtype=torch.float64)
@@ -1470,25 +1470,20 @@ tensor([[33.2544, 22.6192, 18.7582, 20.1998],
 
 Now, we align the embeddings:
 ```python
->>> multiembedding.align()
+multiembedding.align(func = torch.nanmedian)
 ```
 
 Finally, we print the first four points of each embedding after alignment:
 ```python
->>> print(multiembedding.embeddings[0].points[:,:4]) # the first four points after aligning
+print(multiembedding.embeddings[0].points[:,:4]) # the first four points after aligning
 tensor([[  3.0578,  10.5275,  31.3117,  25.8624],
         [  2.6930,   8.7283,  26.0088,  21.4295],
         [ -1.0478,  -5.8004, -17.4059, -14.4443]], dtype=torch.float64)
->>> print(multiembedding.embeddings[1].points[:,:4])
+print(multiembedding.embeddings[1].points[:,:4])
 tensor([[33.1150, 22.5244, 18.6796, 20.1150],
         [31.8393, 21.6427, 17.9367, 19.3190],
         [ 9.0475,  6.1597,  5.1187,  5.5129]], dtype=torch.float64)
 ```
-
-
-
-
-
 
 
 
@@ -1500,7 +1495,7 @@ The `HyperbolicOptimizer` class provides functionality for optimizing a given fu
 ## Constructor and Attributes
 
 ```python
->>> def __init__(self, function, D, N, optimizer=None, learning_rate=0.01, max_grad_norm=1.0, lr_decay_factor=0.99) -> None
+def __init__(self, function, D, N, optimizer=None, learning_rate=0.01, max_grad_norm=1.0, lr_decay_factor=0.99) -> None
 ```
 
 ## Methods
@@ -1521,17 +1516,17 @@ The `HyperbolicOptimizer` class provides functionality for optimizing a given fu
 The following examples demonstrate how to initialize the `HyperbolicOptimizer` class, set up a cost function, and run the optimization process using different optimizers.
 
 ```python
->>> import torch
->>> from htree.optimizer import HyperbolicOptimizer
->>> def hyperbolic_cost_function(points):
->>>    #A simple cost function that minimizes the squared norm of hyperbolic points (pulling them towards the origin).
->>>    return torch.sum((points - 1) ** 2)  # Minimize squared norm of all points
->>> D = 2   # Tangent space dimension (D+1 in hyperbolic space)
->>> N = 5   # Number of points
->>> learning_rate = 0.01
->>> optimizer = HyperbolicOptimizer(hyperbolic_cost_function, D, N, learning_rate=learning_rate)
->>> optimized_points = optimizer.optimize(epochs=1000)
->>> print("Optimized Points (Adam):", optimized_points)
+import torch
+from htree.optimizer import HyperbolicOptimizer
+def hyperbolic_cost_function(points):
+   #A simple cost function that minimizes the squared norm of hyperbolic points (pulling them towards the origin).
+   return torch.sum((points - 1) ** 2)  # Minimize squared norm of all points
+D = 2   # Tangent space dimension (D+1 in hyperbolic space)
+N = 5   # Number of points
+learning_rate = 0.01
+optimizer = HyperbolicOptimizer(hyperbolic_cost_function, D, N, learning_rate=learning_rate)
+optimized_points = optimizer.optimize(epochs=1000)
+print("Optimized Points (Adam):", optimized_points)
 Optimized Points (Adam): HyperbolicEmbedding(curvature=-1.00, model=loid, points_shape=[3, 5])
 ```
 
@@ -1539,15 +1534,15 @@ Optimized Points (Adam): HyperbolicEmbedding(curvature=-1.00, model=loid, points
 The following examples demonstrate how to initialize the `HyperbolicOptimizer` class, set up a cost function, and run the optimization process using different optimizers.
 
 ```python
->>> D = 2  # Tangent space dimension (D+1 in hyperbolic space)
->>> N = 5  # Number of points
->>> learning_rate = 0.05  
->>> # Define a custom optimizer (SGD)
->>> def sgd_optimizer(params):
->>>    return torch.optim.SGD(params, lr=learning_rate, momentum=0.9)
->>> optimizer_sgd = HyperbolicOptimizer(hyperbolic_cost_function, D, N, optimizer=sgd_optimizer, learning_rate=learning_rate)
->>> optimized_points_sgd = optimizer_sgd.optimize(epochs=100)
->>> print("Optimized Points (Adam):", optimized_points.points)
+D = 2  # Tangent space dimension (D+1 in hyperbolic space)
+N = 5  # Number of points
+learning_rate = 0.05  
+# Define a custom optimizer (SGD)
+def sgd_optimizer(params):
+   return torch.optim.SGD(params, lr=learning_rate, momentum=0.9)
+optimizer_sgd = HyperbolicOptimizer(hyperbolic_cost_function, D, N, optimizer=sgd_optimizer, learning_rate=learning_rate)
+optimized_points_sgd = optimizer_sgd.optimize(epochs=100)
+print("Optimized Points (Adam):", optimized_points.points)
 Optimized Points (SGD): tensor([[1.4651, 1.4651, 1.4651, 1.4651, 1.4651],
         [0.7571, 0.7571, 0.7571, 0.7571, 0.7571],
         [0.7571, 0.7571, 0.7571, 0.7571, 0.7571]], dtype=torch.float64)
