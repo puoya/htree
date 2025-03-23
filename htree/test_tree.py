@@ -378,21 +378,21 @@ def plot_embedding_comparison(points_before, points_after, center_before, center
     # ax.set_yticks([])
     ax.set_title(title)
 
-n_points = 10
-dimension = 3
-labels = [str(i) for i in range(n_points+1)]
-points = np.random.randn(dimension,n_points)/10
-# print(points)
+# n_points = 10
+# dimension = 3
+# labels = [str(i) for i in range(n_points+1)]
+# points = np.random.randn(dimension,n_points)/10
+# # print(points)
 
-embedding = PoincareEmbedding(points = points, labels = labels)
-print(embedding)
-embedding.curvature = -.5
-print(embedding)
-print(embedding.dimension)
-print(embedding.n_points)
-import torch
-new_points = torch.tensor([[-0.5, 0.5, 0.5, -0.5], [-0.5, 0.5, -0.5, 0.5]])
-embedding.points = new_points
+# embedding = PoincareEmbedding(points = points, labels = labels)
+# print(embedding)
+# embedding.curvature = -.5
+# print(embedding)
+# print(embedding.dimension)
+# print(embedding.n_points)
+# import torch
+# new_points = torch.tensor([[-0.5, 0.5, 0.5, -0.5], [-0.5, 0.5, -0.5, 0.5]])
+# embedding.points = new_points
 # print(embedding.dimension)
 # print(embedding.n_points)
 
@@ -453,7 +453,7 @@ embedding.points = new_points
 # plt.tight_layout()
 # plt.show()
 
-embedding.curvature = -0.5
+# embedding.curvature = -0.5
 # print(embedding.distance_matrix())
 
 # print(embedding.centroid())
@@ -928,7 +928,8 @@ import torch
 
 tree1 = ts.read_tree_newick('path/to/treefile1.tre')
 tree2 = ts.read_tree_newick('path/to/treefile2.tre')
-multitree = MultiTree('name', [tree1, tree2])
+tree3 = ts.read_tree_newick('path/to/treefile2.tre')
+multitree = MultiTree('name', [tree1, tree2,tree3])
 print(multitree)
 # print(multitree.distance_matrix()[0][:4,:4])
 # multiembedding = multitree.embed(dim = 2, geometry = 'euclidean', precise_opt = True)
@@ -954,9 +955,10 @@ multiembedding = multitree.embed(dim = 2,precise_opt = True)
 # print(multiembedding.embeddings[0].points[:,:4])
 # print(multiembedding.embeddings[1].points[:,:4])
 # print(multiembedding.distance_matrix()[0][:4,:4])
-print(multiembedding.embeddings[0].points)
-print(multiembedding.embeddings[1].points)
-multiembedding.align()
+# print(multiembedding.embeddings[0].points)
+# print(multiembedding.embeddings[1].points)
+multiembedding.align(func = torch.nanmean,precise_opt = True)
+# multiembedding.align(func = torch.nanmean)
 print(multiembedding.embeddings[0].points)
 print(multiembedding.embeddings[1].points)
 # print(multiembedding.embeddings[0].points[:,:4])

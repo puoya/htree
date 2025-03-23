@@ -995,12 +995,9 @@ class MultiEmbedding:
         _logger (logging.Logger): A logger for the class if logging is enabled.
     """
 
-    def __init__(self, enable_logging: bool = False):
+    def __init__(self):
         """
         Initializes the MultiEmbedding with an empty list of embeddings.
-
-        Args:
-            enable_logging (bool): If True, logging is enabled. Default is False.
         """
         self.embeddings = []
         self._current_time = get_time() or datetime.now()  # Uses a global timestamp function
@@ -1136,16 +1133,15 @@ class MultiEmbedding:
             return
 
         reference_embedding = self.reference_embedding(**kwargs)
-        print(reference_embedding)
-        print(self.embeddings)
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != 'func'}
 
         if self.curvature < 0:
             for i, embedding in enumerate(self.embeddings):
-                model = procrustes.HyperbolicProcrustes(embedding, reference_embedding,**kwargs)
+                model = procrustes.HyperbolicProcrustes(embedding, reference_embedding,**filtered_kwargs)
                 self.embeddings[i] = model.map(embedding)
         else:
             for i, embedding in enumerate(self.embeddings):
-                model = procrustes.EuclideanProcrustes(embedding, reference_embedding,**kwargs)
+                model = procrustes.EuclideanProcrustes(embedding, reference_embedding,**filtered_kwargs)
                 self.embeddings[i] = model.map(embedding)
 
     def distance_matrix(self, 
@@ -1217,7 +1213,8 @@ class MultiEmbedding:
                 'save_mode': conf.ENABLE_SAVE_MODE,
                 'scale_fn': None,
                 'lr_fn': None,
-                'weight_exp_fn': None
+                'weight_exp_fn': None,
+                'func' : torch.nanmean
             }.items()
         }
 
@@ -1247,7 +1244,7 @@ class MultiEmbedding:
     ################################################################################################
     def _embed_euclidean(self, dim: int, **params) -> 'Embedding':
         """Handle naive and precise Euclidean embeddings."""
-        dist_mat = self.distance_matrix()[0]
+        dist_mat = self.distance_matrix(func = params['func'])[0]
         # Naive Euclidean embedding
         self._log_info("Initiating naive Euclidean embedding.")
         points = self._naive_euclidean_embedding(dist_mat, dim)
@@ -1275,8 +1272,7 @@ class MultiEmbedding:
     def _embed_hyperbolic(self, dim: int, **params) -> 'Embedding':
         """Handle naive and precise hyperbolic embeddings."""
         scale_factor = torch.sqrt(torch.abs(self.curvature))
-        print(self.curvature)
-        dist_mat = self.distance_matrix()[0] * scale_factor
+        dist_mat = self.distance_matrix(func = params['func'])[0] * scale_factor
         # Naive hyperbolic embedding
         self._log_info("Initiating naive hyperbolic embedding.")
         points = self._naive_hyperbolic_embedding(dist_mat, dim)

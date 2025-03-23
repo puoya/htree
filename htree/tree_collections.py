@@ -1086,7 +1086,7 @@ class MultiTree:
                 'scale_fn': None,
                 'lr_fn': None,
                 'weight_exp_fn': None,
-                'normalize': True
+                'normalize': False
             }.items()
         }
 
