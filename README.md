@@ -210,7 +210,7 @@ The `embed` has several optional parameters (kwargs) that allow customization of
   - [![Watch the video](https://img.youtube.com/vi/bj0z6dPB9Uo/0.jpg)](https://youtu.be/bj0z6dPB9Uo)
 
 
-* **`lr_fn` (callable, optional) [Default: `None`]:**
+* **`lr_fn` (callable, optional):**
   + Specifies a custom learning rate function for the optimization process. The function takes in arguments like the current epoch, total epochs, and a list of losses, and returns a float value representing the learning rate at that epoch. If provided, the actual learning rate is computed as the product of the initial learning rate (`lr_init`) and the value returned by this function. If not provided, an adaptive learning rate is used, adjusting based on the progress of the optimization process.
   + Example:
   ```python
@@ -249,7 +249,7 @@ The `embed` has several optional parameters (kwargs) that allow customization of
     return  decay_rate
   tree.embed(dim=2, precise_opt=True, lr_fn=custom_learning_rate, lr_init = 0.01)
   ```
-* **`scale_fn`(callable, optional) [Default: `None`]:**
+* **`scale_fn`(callable, optional):**
   +A custom function that determines whether scale learning should occur during the optimization process. The function takes the current epoch, total epochs, and a list of losses as input, and returns a boolean value. If `True`, scale learning is performed during that epoch; otherwise, it is skipped. If not provided, the default behavior is to enable scale learning during the early epochs of training based on a predefined ratio.
   + Example:
   ```python
@@ -277,7 +277,7 @@ The `embed` has several optional parameters (kwargs) that allow customization of
     return epoch < int(0.6 * total_epochs)
   tree.embed(dim=2, precise_opt=True, scale_fn=custom_scale)
   ```
-* **`weight_exp_fn` (callable, optional) [Default: `None`]:**
+* **`weight_exp_fn` (callable, optional):**
   + A custom function to dynamically compute the weight exponent during the optimization process. The function takes the current epoch and total epochs as input, and returns a float representing the weight exponent for that epoch. The weight exponent determines how distances are weighted during optimization. If not provided, a default behavior is applied, where weighting changes over the course of the training based on the progress of the optimization process.
   + Example:
   ```python
@@ -386,8 +386,8 @@ MultiTree(mTree, 10 trees)
 print(multitree.trees)
 [Tree(tree_1), Tree(tree_2), Tree(tree_3), Tree(tree_4), Tree(tree_5), Tree(tree_6), Tree(tree_7), Tree(tree_8), Tree(tree_9), Tree(tree_10)]
 # Compute the distance matrix with default aggregation (mean)
-distance_matrix = multitree.distance_matrix()[:4,:4]
-print(distance_matrix)
+avg_mat, conf, labels = multitree.distance_matrix()
+print(avg_mat[:4,:4])
 tensor([[0.0000, 0.7049, 1.2343, 0.5929],
         [0.7049, 0.0000, 1.3234, 0.6870],
         [1.2343, 1.3234, 0.0000, 1.0143],
@@ -461,14 +461,13 @@ The `Embedding` class is an abstract base class designed to represent embeddings
 
 ## Initialization 
 ```python
->>> def __init__(geometry='hyperbolic', points=None, labels=None, enable_logging=False)
+def __init__(geometry='hyperbolic', points=None, labels=None)
 ```
 
 ## Parameters
 - **geometry (`str`)**: The geometry type (`euclidean` or `hyperbolic`). Default is `hyperbolic`.
 - **points (`Optional[Union[np.ndarray, torch.Tensor]]`)**: Points to embed, provided as a NumPy array or PyTorch tensor. Default is `None`.
 - **labels (`Optional[List[Union[str, int]]]`)**: Labels for the points. Default is `None`.
-- **enable_logging (`bool`)**: Enables logging if set to `True`. Default is `False`.
 
   
 ## Methods
@@ -480,29 +479,31 @@ In practice, the `Embedding` class itself is not directly instantiated. Instead,
 
 ## Examples
 ```python
->>> from htree.embedding import Embedding
->>> import numpy as np
->>> # Create an embedding with hyperbolic geometry (norm requirements are not applied)
->>> n_points = 10
->>> dimension = 2
->>> embedding = Embedding(geometry='hyperbolic', points=np.random.randn(dimension,n_points))
->>> print(embedding)
+from htree.embedding import Embedding
+import numpy as np
+# Create an embedding with hyperbolic geometry (norm requirements are not applied)
+n_points = 10
+dimension = 2
+embedding = Embedding(geometry='hyperbolic', points=np.random.randn(dimension,n_points))
+print(embedding)
 Embedding(geometry=hyperbolic, points_shape=[2, 10])
->>> # Update points
->>> embedding.points = np.random.randn(2,150)
+# Update points
+embedding.points = np.random.randn(2,150)
 raise NotImplementedError("update_dimensions must be implemented by a subclass")
->>> # Set labels
->>> labels = [str(i) for i in range(n_points)]
->>> embedding.labels = list(range(n_points))
->>> # Save the embedding
->>> embedding.save('embedding.pkl')
->>> # Load the embedding
->>> loaded_embedding = Embedding.load('embedding.pkl')
->>> print(loaded_embedding)
+# Set labels
+labels = [str(i) for i in range(n_points)]
+embedding.labels = list(range(n_points))
+# Save the embedding
+embedding.save('embedding.pkl')
+# Load the embedding
+loaded_embedding = Embedding.load('embedding.pkl')
+print(loaded_embedding)
 Embedding(geometry=hyperbolic, points_shape=[2, 10])
->>> import torch
->>> embedding = Embedding(geometry='euclidean', points = np.random.randn(dimension,n_points) ,enable_logging = True)
->>> print(embedding)
+import torch
+import htree.logger as logger
+logger.set_logger(True)
+embedding = Embedding(geometry='euclidean', points = np.random.randn(dimension,n_points))
+print(embedding)
 Embedding(geometry=euclidean, points_shape=[2, 10])
 ```
 
