@@ -63,20 +63,21 @@ class PCA:
 
         if self._geometry == 'euclidean':
             # Compute the centroid of the points
+
             centroid = self.embedding.centroid()
             self.mean = centroid
 
-            # Center the points by subtracting the centroid
             centered_points = self._points - centroid.reshape(-1, 1)
-
-            # Compute the Gram matrix (matrix of inner products)
             gram_matrix = np.dot(centered_points, centered_points.T)
 
-            # Perform PCA on the Gram matrix
-            pca = PCA()
-            pca.fit(gram_matrix)
-            self._mapping_matrix = torch.tensor(pca.components_)
+            eigenvalues, eigenvectors = np.linalg.eigh(gram_matrix)
 
+            sorted_indices = np.argsort(eigenvalues)[::-1]
+            sorted_eigenvectors = eigenvectors[:, sorted_indices]
+            components = sorted_eigenvectors.T
+
+            self._mapping_matrix = torch.tensor(components)
+            
         elif self._geometry == 'hyperbolic':
             # Switch to Loid model if not already in it
             if self.embedding.model != 'loid':

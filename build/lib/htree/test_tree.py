@@ -1,195 +1,309 @@
-from typing import Optional, Union, List,Callable
+from collections.abc import Collection
+from typing import Union, Set, Optional, List, Callable, Tuple, Dict, Iterator
 
 from tree_collections import Tree
+# # import htree.logger
 
+# Enable logging for the session
+import logger
+import torch
+import treeswift as ts
+
+import matplotlib
+matplotlib.use('Qt5Agg')  # Or use 'TkAgg' for Tkinter
+
+
+
+def custom_learning_rate(epoch: int, total_epochs: int, loss_list: List[float]) -> float:
+    """ 
+    Calculate a dynamic learning rate based on the current epoch and total number of epochs.
+    Parameters:
+    - epoch (int): The current epoch in the training process.
+    - total_epochs (int): The total number of epochs in the training process.
+    - loss_list (list): A list of recorded loss values (can be used for further custom logic).
+
+    Returns:
+    - float: The dynamic learning rate for the current epoch.
+
+    Raises:
+    - ValueError: If `total_epochs` is less than or equal to 1.
+    """
+
+    if total_epochs <= 1:
+        raise ValueError("Total epochs must be greater than 1.")
+
+    # Example: Reduce learning rate as training progresses
+    decay_factor = 0.5  # Factor by which to decay the learning rate
+    loss_threshold = 0.01  # Loss threshold for further reduction
+    decay_start_epoch = int(0.7 * total_epochs)  # When to start decaying
+
+    # Reduce learning rate if the epoch is beyond a certain point
+    if epoch > decay_start_epoch:
+        # Learning rate decays based on the remaining epochs
+        decay_rate = 1 - (epoch - decay_start_epoch) / (total_epochs - decay_start_epoch)
+    else:
+        decay_rate = 1.0  # No decay before the threshold
+    # Further adjust learning rate if recent loss has not improved sufficiently
+    if len(loss_list) > 1 and loss_list[-1] > loss_threshold:
+        decay_rate *= decay_factor
+    return  decay_rate
+
+def custom_scale(epoch: int, total_epochs: int, loss_list: List[float]) -> bool:
+    """
+    Determine whether scale learning should occur based on the current epoch and total number of epochs.
+
+    Parameters:
+    - epoch (int): The current epoch in the training process.
+    - total_epochs (int): The total number of epochs in the training process.
+    - loss_list (list): A list of recorded loss values (can be used for further custom logic).
+
+    Returns:
+    - bool: `True` if scale learning should occur, `False` otherwise.
+    
+    Raises:
+    - ValueError: If `total_epochs` is less than or equal to 1.
+    """
+    if total_epochs <= 1:
+        raise ValueError("Total epochs must be greater than 1.")
+
+    # Define the ratio of epochs during which scale learning should be applied
+    curv_ratio = 0.3  # For example, learning happens during the first 30% of epochs
+    
+    return epoch < int(0.6 * total_epochs)
+
+def custom_weight_exponent(epoch: int, total_epochs: int,loss_list: List[float]) -> float:
+  """
+  Calculate the weight exponent based on the current epoch and total number of epochs.
+
+  Parameters:
+  - epoch (int): The current epoch in the training process.
+  - total_epochs (int): The total number of epochs in the training process.
+- loss_list (list): A list of recorded loss values (can be used for further custom logic).
+
+  Returns:
+  - float: The calculated weight exponent for the current epoch.
+  
+  Raises:
+  - ValueError: If `total_epochs` is less than or equal to 1.
+  """
+  if total_epochs <= 1:
+      raise ValueError("Total epochs must be greater than 1.")
+
+  # Define a ratio that determines how long to apply no weights
+  no_weight_ratio = 0.3  # Example ratio: first 30% of epochs without weighting
+  no_weight_epochs = int(no_weight_ratio * total_epochs)
+  # No weighting for the first part of the training
+  if epoch < no_weight_epochs:
+      return 0.0  # No weighting initially
+  
+  # Gradually increase the negative weight exponent after the no-weight phase
+  return -(epoch - no_weight_epochs) / (total_epochs - 1 - no_weight_epochs)
+
+
+
+
+logger.set_logger(True)
 tree = Tree("path/to/treefile.tre")
-print(tree)
-# # import treeswift as ts
-# # t = ts.read_tree_newick("path/to/treefile.tre")
-# # tree = Tree("Name", t, enable_logging=True)
+# terminals = tree.terminal_names()[:4]
+# print(terminals[:4])
+# dist_matrix = tree.distance_matrix()[0]
+# print(dist_matrix[:4,:4])
+# # print(tree.distance_matrix()[1])
+# print(tree.distance_matrix())
+# diameter = tree.diameter()
+# print(diameter)
+# t = ts.read_tree_newick("path/to/treefile.tre")
+# tree = Tree("Name", t)
 # print(tree)
-
-
-# # tree = Tree("path/to/treefile.tre", enable_logging=True)
-# # print(tree)
-terminals = tree.terminal_names()[:4]
-print(terminals[:4])
-dist_matrix = tree.distance_matrix()[:4,:4]
-print(dist_matrix)
-diameter = tree.diameter()
-print(diameter)
-tree.normalize()
-diameter = tree.diameter()
-print(diameter)
-embedding = tree.embed(dimension=2, geometry='hyperbolic')
-print(embedding)
-# embedding = tree.embed(dimension=3, geometry='euclidean')
+# tree = Tree("path/to/treefile.tre")
+# print(tree)
+# tree.normalize()
+# diameter = tree.diameter()
+# print(diameter)
+# embedding = tree.embed(dim=4, geometry = 'euclidean')
 # print(embedding)
-# embedding = tree.embed(dimension=2, geometry='euclidean')
+# print(embedding.points)
+# embedding = tree.embed(dim=3,save_mode=True,geometry = 'euclidean')
 # print(embedding)
-# embedding = tree.embed(dimension=2, accurate=True)
+# print(embedding.points)
+# embedding = tree.embed(dim=3,export_video=True, epochs=1000,geometry = 'euclidean')
 # print(embedding)
-# embedding = tree.embed(dimension=2, accurate=True, total_epochs=1000)
+# print(embedding.points)
+# embedding = tree.embed(dim=10,precise_opt=False,export_video=True, epochs=100,geometry = 'euclidean')
 # print(embedding)
-# embedding = tree.embed(dimension=2, accurate=True, initial_lr=0.01)
+# print(embedding.points)
+# embedding = tree.embed(dim=10,precise_opt=True,geometry = 'euclidean')
 # print(embedding)
-# embedding = tree.embed(dimension=2, max_diameter=5.0)
+# print(embedding.points)
+# embedding = tree.embed(dim=3,precise_opt=True,export_video=False, epochs=1000,geometry = 'euclidean')
 # print(embedding)
-# embedding = tree.embed(dimension=2, accurate=True, enable_save=True)
+# print(embedding.points)
+# embedding = tree.embed(dim=4, precise_opt=True,epochs=2000,geometry = 'euclidean')
 # print(embedding)
-embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epochs=100)
-
-# def custom_learning_rate(epoch: int, total_epochs: int, loss_list: List[float]) -> float:
-#     """ 
-#     Calculate a dynamic learning rate based on the current epoch and total number of epochs.
-#     Parameters:
-#     - epoch (int): The current epoch in the training process.
-#     - total_epochs (int): The total number of epochs in the training process.
-#     - loss_list (list): A list of recorded loss values (can be used for further custom logic).
-
-#     Returns:
-#     - float: The dynamic learning rate for the current epoch.
-
-#     Raises:
-#     - ValueError: If `total_epochs` is less than or equal to 1.
-#     """
-
-#     if total_epochs <= 1:
-#         raise ValueError("Total epochs must be greater than 1.")
-
-#     # Example: Reduce learning rate as training progresses
-#     decay_factor = 0.5  # Factor by which to decay the learning rate
-#     loss_threshold = 0.01  # Loss threshold for further reduction
-#     decay_start_epoch = int(0.7 * total_epochs)  # When to start decaying
-
-#     # Reduce learning rate if the epoch is beyond a certain point
-#     if epoch > decay_start_epoch:
-#         # Learning rate decays based on the remaining epochs
-#         decay_rate = 1 - (epoch - decay_start_epoch) / (total_epochs - decay_start_epoch)
-#     else:
-#         decay_rate = 1.0  # No decay before the threshold
-#     # Further adjust learning rate if recent loss has not improved sufficiently
-#     if len(loss_list) > 1 and loss_list[-1] > loss_threshold:
-#         decay_rate *= decay_factor
-#     return  decay_rate
-
-# embedding = tree.embed(dimension=2, accurate=True, learning_rate=custom_learning_rate, initial_lr = 0.01)
-
-
-# def custom_scale(epoch: int, total_epochs: int, loss_list: List[float]) -> bool:
-#     """
-#     Determine whether scale learning should occur based on the current epoch and total number of epochs.
-
-#     Parameters:
-#     - epoch (int): The current epoch in the training process.
-#     - total_epochs (int): The total number of epochs in the training process.
-#     - loss_list (list): A list of recorded loss values (can be used for further custom logic).
-
-#     Returns:
-#     - bool: `True` if scale learning should occur, `False` otherwise.
-    
-#     Raises:
-#     - ValueError: If `total_epochs` is less than or equal to 1.
-#     """
-#     if total_epochs <= 1:
-#         raise ValueError("Total epochs must be greater than 1.")
-
-#     # Define the ratio of epochs during which scale learning should be applied
-#     curv_ratio = 0.3  # For example, learning happens during the first 30% of epochs
-    
-#     return epoch < int(0.5 * total_epochs)
-# tree.embed(dimension=2, accurate=True, scale_learning=custom_scale)
-
-
-# def custom_weight_exponent(epoch: int, total_epochs: int,loss_list: List[float]) -> float:
-#   """
-#   Calculate the weight exponent based on the current epoch and total number of epochs.
-
-#   Parameters:
-#   - epoch (int): The current epoch in the training process.
-#   - total_epochs (int): The total number of epochs in the training process.
-# - loss_list (list): A list of recorded loss values (can be used for further custom logic).
-
-#   Returns:
-#   - float: The calculated weight exponent for the current epoch.
-  
-#   Raises:
-#   - ValueError: If `total_epochs` is less than or equal to 1.
-#   """
-#   if total_epochs <= 1:
-#       raise ValueError("Total epochs must be greater than 1.")
-
-#   # Define a ratio that determines how long to apply no weights
-#   no_weight_ratio = 0.3  # Example ratio: first 30% of epochs without weighting
-#   no_weight_epochs = int(no_weight_ratio * total_epochs)
-#   # No weighting for the first part of the training
-#   if epoch < no_weight_epochs:
-#       return 0.0  # No weighting initially
-  
-#   # Gradually increase the negative weight exponent after the no-weight phase
-#   return -(epoch - no_weight_epochs) / (total_epochs - 1 - no_weight_epochs)
-# tree.embed(dimension=2, accurate=True, weight_exponent=custom_weight_exponent)
+# print(embedding.points)
+# logger.set_logger(False)
+# embedding = tree.embed(dim=3, save_mode=True,precise_opt=True,geometry = 'euclidean')
 # print(embedding)
+# print(embedding.points)
+# embedding = tree.embed(dim=3, export_video=True, epochs=200,precise_opt=True,geometry = 'euclidean')
+# print(embedding)
+# print(embedding.points)
+# embedding = tree.embed(dim=3, epochs=100,precise_opt=True,geometry = 'euclidean')
+# print(embedding)
+# print(embedding.points)
+# logger.set_logger(True)
+# embedding = tree.embed(dim=3, epochs=200,precise_opt=True,geometry = 'euclidean')
+# print(embedding)
+# print(embedding.points)
+# embedding = tree.embed(dim=3, epochs=200,save_mode=True,geometry = 'euclidean')
+# print(embedding)
+# print(embedding.points)
+# embedding = tree.embed(dim=3, epochs=200,save_mode=True,lr_init = 0.1,geometry = 'euclidean')
+# print(embedding)
+# print(embedding.points)
+# embedding = tree.embed(dim=3, epochs=200,precise_opt=True,save_mode=True,lr_init = 0.02,geometry = 'euclidean')
+# print(embedding)
+# print(embedding.points)
+# embedding = tree.embed(dim=10, precise_opt=True, epochs=1000,geometry = 'euclidean')
+# print(embedding)
+# print(embedding.points)
+# embedding = tree.embed(dim=2, precise_opt=True,scale_fn=custom_scale,geometry = 'euclidean')
+# print(embedding.points)
+# embedding = tree.embed(dim=2, precise_opt=True, lr_fn =custom_learning_rate, lr_init = 0.01,geometry = 'euclidean')
+# print(embedding.points)
+# embedding = tree.embed(dim=2, precise_opt=True, weight_exp_fn=custom_weight_exponent,geometry = 'euclidean')
+# print(embedding.points)
+# embedding = tree.embed(dim=2, precise_opt=True,weight_exp_fn=custom_weight_exponent, export_video=True, epochs = 1000,geometry = 'euclidean')
+# print(embedding.points)
+
+
+
+
+# logger.set_logger(True)
+# embedding = tree.embed(dim=4)
+# print(embedding)
+# print(embedding.points)
+# print(embedding.distance_matrix())
+# print(tree.distance_matrix()[0])
+# embedding = tree.embed(dim=3,save_mode=True)
+# print(embedding)
+# print(embedding.points)
+# embedding = tree.embed(dim=3,export_video=True, epochs=1000)
+# print(embedding)
+# print(embedding.points)
+# embedding = tree.embed(dim=10,export_video=False, precise_opt=True, epochs=100,save_mode=True)
+# print(embedding)
+# print(embedding._norm2())
+# print(embedding.points)
+# print(tree._current_time)
+# tree.update_time()
+# print(tree._current_time)
+# embedding = tree.embed(dim=10,precise_opt=False, save_mode=True)
+# print(embedding)
+# print(embedding.points)
+# logger.set_logger(True)
+# embedding = tree.embed(dim=3,precise_opt=True,export_video=True, epochs=1000)
+# print(embedding)
+# print(embedding.points)
+# print(embedding._norm2())
+# embedding = tree.embed(dim=4, precise_opt=True,epochs=2000)
+# print(embedding)
+# print(embedding.points)
+# logger.set_logger(False)
+# embedding = tree.embed(dim=3, save_mode=True,precise_opt=True)
+# print(embedding)
+# print(embedding.points)
+# embedding = tree.embed(dim=3, export_video=True, epochs=200,precise_opt=True)
+# print(embedding)
+# print(embedding.points)
+# embedding = tree.embed(dim=3, epochs=1000,precise_opt=True)
+# print(embedding)
+# print(embedding.points)
+# logger.set_logger(True)
+# print(embedding.points)
+# embedding = tree.embed(dim=3, epochs=200,precise_opt=True)
+# print(embedding)
+# print(embedding.points)
+# embedding = tree.embed(dim=3, epochs=200,save_mode=True)
+# print(embedding)
+# print(embedding.points)
+# embedding = tree.embed(dim=3, epochs=200,save_mode=True,lr_init = 0.1)
+# print(embedding)
+# print(embedding.points)
+# embedding = tree.embed(dim=3, epochs=200,precise_opt=True,save_mode=True,lr_init = 0.02)
+# print(embedding)
+# print(embedding.points)
+# tree.update_time()
+# embedding = tree.embed(dim=10, precise_opt=True, epochs=1000)
+# print(embedding)
+# print(embedding.points)
+# embedding = tree.embed(dim=2, precise_opt=True,scale_fn=custom_scale)
+# print(embedding.points)
+# embedding = tree.embed(dim=2, precise_opt=True, lr_fn =custom_learning_rate, lr_init = 0.01)
+# print(embedding.points)
+# embedding = tree.embed(dim=2, precise_opt=True, weight_exp_fn=custom_weight_exponent)
+# print(embedding.points)
+# embedding = tree.embed(dim=2, precise_opt=True,weight_exp_fn=custom_weight_exponent, export_video=True, epochs = 500)
+# print(embedding.points)
 
 
 
 
 # from tree_collections import MultiTree
-
-# Initialize from a Newick file
+# logger.set_logger(True)
+# # Initialize from a Newick file
 # multitree = MultiTree("path/to/trees.tre")
+# multitree = multitree[:10]
 # print(multitree)
-# Initialize from a list of trees
-# import treeswift as ts
-# tree1 = ts.read_tree_newick("path/to/treefile1.tre")
-# tree2 = ts.read_tree_newick("path/to/treefile2.tre")
-# tree_list = [tree1, tree2]  # List of trees
-# multitree = MultiTree('Name', tree_list)
-# print(multitree)
-# print(multitree.trees)
-
-# Initialize from a dictionary of trees
-# tree_dict = {"tree1": tree1, "tree2": tree2}
-# multitree = MultiTree('mTree', tree_dict)
-# print(multitree.trees)
-
-# distance_matrix = multitree.distance_matrix()[:4,:4]
-# print(distance_matrix)
-# terminals = multitree.terminal_names()[:4]
+# terminals = multitree.terminal_names()  
 # print(terminals)
-
-# import torch
-# distance_matrix = multitree.distance_matrix(func=torch.nanmedian)[:4,:4]
-# print(distance_matrix)
-# distance_matrix, confidence_matrix = multitree.distance_matrix(func=torch.nanmedian,confidence= True)
-# print(confidence_matrix[2:6,2:6])
-
-
-# embedding = multitree.embed(dimension=3, geometry='euclidean')
-# print(embedding)
+# terminals = multitree.common_terminals()
+# print(terminals)
+# D,C,L = multitree.distance_matrix(method = 'fp', func= torch.nanmedian)
+# print(D,C,L)
+# D,C,L = multitree.distance_matrix(method = 'fp', func= torch.nanmean)
+# print(D,C,L)
+# D,C,L = multitree.distance_matrix(method = 'fp')
+# print(D,C,L)
+# D,C,L = multitree.distance_matrix(func= torch.nanmedian)
+# print(D,C,L)
+# D,C,L = multitree.distance_matrix(func= torch.nanmean)
+# print(D,C,L)
+# D,C,L = multitree.distance_matrix()
+# print(D,C,L)
+# D,C,L = multitree.distance_matrix()
+# print(D.max())
+# x = multitree.normalize(batch_mode=False)
+# print(x)
+# x = multitree.normalize(batch_mode=True)
+# print(x)
+# x = multitree.normalize(batch_mode=False)
+# print(x)
+# D,C,L = multitree.distance_matrix()
+# print(C)
+# print(D.max())
+# multi = multitree.embed(dim=3, geometry='euclidean')
+# print(multi)
+# print(multi.embeddings)
+# embedding = multitree.embed(dim=3, precise_opt=True,scale_fn=custom_scale)
 # print(embedding.embeddings)
-
-# embedding = multitree.embed(dimension=2, geometry='hyperbolic')
-# print(embedding)
-# print(embedding.embeddings)
-
-# embedding = multitree.embed(dimension=2, geometry='hyperbolic', accurate = True)
-# print(embedding)
-# print(embedding.embeddings)
-
-# Initialize with logging enabled
-# multitree = MultiTree("path/to/trees.tre", enable_logging=True)
-# print(multitree)
-# print(multitree._logger)
-# multitree.save_trees("path/to/output.tre")
+# multi = multitree.embed(dim=2, geometry='hyperbolic')
+# print(multi)
+# print(multi.embeddings)
+# print(multi.embeddings[3].points)
+# multi = multitree.embed(dim=2, geometry='hyperbolic',precise_opt=True , epochs = 1000, save_mode = True)
+# print(multi)
 
 
-# from embedding import Embedding
-# import numpy as np
-# import torch
+
+
+from embedding import Embedding
+import numpy as np
+import torch
+logger.set_logger(True)
 # n_points = 10
 # dimension = 2
-# labels = [str(i) for i in range(n_points+1)]
+# labels = [str(i) for i in range(n_points)]
 # points = np.random.randn(dimension,n_points)
 # embedding = Embedding(geometry='euclidean')
 # embedding.save('embedding.pkl')
@@ -197,26 +311,24 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 # print(loaded_embedding)
 # embd = Embedding(geometry='hyperbolic', points = points)
 # print(embd)
+# # print(embd.distance_matrix())
 # embd.labels = labels
 # # embd.points = np.random.randn(dimension,150)
-# # print(embd.labels)
-# # print(embd.geometry)
+# print(embd.labels)
+# print(embd.geometry)
 # print(embd)
-
 # points = torch.randn(dimension,n_points)
-# print(Embedding(geometry='euclidean', points = points, enable_logging = True))
+# print(Embedding(geometry='euclidean', points = points))
 
 
 # from embedding import EuclideanEmbedding
 # import numpy as np
 # n_points = 10
 # dimension = 2
-# labels = [str(i) for i in range(n_points+1)]
+# labels = [str(i) for i in range(n_points)]
 # points = np.random.randn(dimension,n_points)/10
-
 # embedding = EuclideanEmbedding(points = points, labels = labels)
 # print(embedding.points)
-
 # translatio_vector = np.random.randn(dimension)
 # print(translatio_vector)
 # embedding.translate(translatio_vector)
@@ -229,10 +341,8 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 #     [np.cos(theta), -np.sin(theta)],
 #     [np.sin(theta), np.cos(theta)]
 # ])
-
 # embedding.rotate(rotation_matrix)
 # print(embedding.points)
-
 # new_points = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
 # embedding.points = new_points  # This will automatically update dimensions and other attributes.
 # print(embedding)
@@ -246,27 +356,27 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 # print(centroid)
 # print(embedding.distance_matrix())
 
-# from embedding import PoincareEmbedding
-# import numpy as np
+from embedding import PoincareEmbedding
+import numpy as np
 
-# import matplotlib.pyplot as plt
-# import numpy as np
+import matplotlib.pyplot as plt
+import numpy as np
 
-# def plot_embedding_comparison(points_before, points_after, center_before, center_after, title, ax):
-#     # Plot Poincaré unit circle (domain) in black
-#     theta = np.linspace(0, 2 * np.pi, 100)
-#     circle_x = np.sin(theta)
-#     circle_y = np.cos(theta)
-#     ax.plot(circle_x, circle_y, 'k-')
-#     ax.scatter(points_before[0, :], points_before[1, :], color='blue', label='Before', edgecolor='k')
-#     ax.scatter(points_after[0, :], points_after[1, :], color='red', label='After', edgecolor='k')
-#     ax.scatter(center_before[0], center_before[1], color='blue', marker='x', s=100, label='Center')
-#     ax.scatter(center_after[0], center_after[1], color='red', marker='x', s=100, label='Center')
-#     ax.set_aspect('equal')
-#     ax.legend()
-#     # ax.set_xticks([])
-#     # ax.set_yticks([])
-#     ax.set_title(title)
+def plot_embedding_comparison(points_before, points_after, center_before, center_after, title, ax):
+    # Plot Poincaré unit circle (domain) in black
+    theta = np.linspace(0, 2 * np.pi, 100)
+    circle_x = np.sin(theta)
+    circle_y = np.cos(theta)
+    ax.plot(circle_x, circle_y, 'k-')
+    ax.scatter(points_before[0, :], points_before[1, :], color='blue', label='Before', edgecolor='k')
+    ax.scatter(points_after[0, :], points_after[1, :], color='red', label='After', edgecolor='k')
+    ax.scatter(center_before[0], center_before[1], color='blue', marker='x', s=100, label='Center')
+    ax.scatter(center_after[0], center_after[1], color='red', marker='x', s=100, label='Center')
+    ax.set_aspect('equal')
+    ax.legend()
+    # ax.set_xticks([])
+    # ax.set_yticks([])
+    ax.set_title(title)
 
 # n_points = 10
 # dimension = 3
@@ -275,25 +385,26 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 # # print(points)
 
 # embedding = PoincareEmbedding(points = points, labels = labels)
-# # print(embedding)
+# print(embedding)
 # embedding.curvature = -.5
-# # print(embedding)
-# # print(embedding.dimension)
-# # print(embedding.n_points)
+# print(embedding)
+# print(embedding.dimension)
+# print(embedding.n_points)
 # import torch
 # new_points = torch.tensor([[-0.5, 0.5, 0.5, -0.5], [-0.5, 0.5, -0.5, 0.5]])
 # embedding.points = new_points
-# # print(embedding.dimension)
-# # print(embedding.n_points)
+# print(embedding.dimension)
+# print(embedding.n_points)
 
 # # # Translate the points
 # print(embedding.points)
 # print(embedding.distance_matrix())
 
+# # plt.figure(figsize=(6,12))
 # fig, axs = plt.subplots(1, 2, figsize=(14, 7))
 # points_before = embedding.points
 
-# # translation_vector = np.array([0.25, -0.75])
+# translation_vector = np.array([0.25, -0.75])
 
 # theta = np.radians(30)
 # rotation_matrix = np.array([ [np.cos(theta), -np.sin(theta)],
@@ -304,13 +415,12 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 # center = embedding.centroid()
 
 
-# # embedding.translate(translation_vector)
+
 
 
 # # Plot for translation
-# # plot_embedding_comparison(points_before, embedding.points, center, embedding.centroid(), 'Effect of Translation', axs[0])
-# plot_embedding_comparison(points_before, embedding.points, center, embedding.centroid(), 'Effect of Rotation', axs[0])
-
+# plot_embedding_comparison(points_before, embedding.points, center, embedding.centroid(), 'Effect of Translation', axs[0])
+# # plot_embedding_comparison(points_before, embedding.points, center, embedding.centroid(), 'Effect of Rotation', axs[0])
 
 # points_before = embedding.points
 # center = embedding.centroid()
@@ -319,23 +429,24 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 # rotation_matrix = np.array([ [np.cos(theta), -np.sin(theta)],
 #     [np.sin(theta), np.cos(theta)]])
 # # Rotate the points
-# embedding.rotate(rotation_matrix)
+# # embedding.rotate(rotation_matrix)
+# embedding.translate(translation_vector)
 
-# # print(embedding)
-# # print(embedding.points)
-# # print(embedding.distance_matrix())
-# # print(embedding.centroid())
-# # print(embedding.centroid(mode = 'Frechet'))
+# print(embedding)
+# print(embedding.points)
+# print(embedding.distance_matrix())
+# print(embedding.centroid())
+# print(embedding.centroid(mode = 'Frechet'))
 
 
-# # print(center)
-# # embedding.center()
+# print(center)
+# embedding.center()
 
-# # center = embedding.centroid()
+# center = embedding.centroid()
 
 # # Plot for centering operations
-# # plot_embedding_comparison(points_before, embedding.points, center, embedding.centroid(), 'Effect of Centering', axs[1])
-# plot_embedding_comparison(points_before, embedding.points, center, embedding.centroid(), 'Effect of Rotation', axs[1])
+# plot_embedding_comparison(points_before, embedding.points, center, embedding.centroid(), 'Effect of Centering', axs[1])
+# # plot_embedding_comparison(points_before, embedding.points, center, embedding.centroid(), 'Effect of Rotation', axs[1])
 
 # # print(embedding.points)
 
@@ -348,8 +459,10 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 # print(embedding.centroid())
 # print(embedding.centroid(mode = 'Frechet'))
 
+# print(embedding.points)
 # loid_embedding = embedding.switch_model()
-# print(loid_embedding)
+# print(loid_embedding.points)
+# print(loid_embedding.curvature)
 
 
 # import matplotlib.pyplot as plt
@@ -444,12 +557,12 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 # norm_points = np.linalg.norm(points, axis=0)
 # points = np.vstack([np.sqrt(1 + norm_points**2), points])
 # embedding = LoidEmbedding(points=points, labels=labels)
-# # print(embedding)
+# print(embedding)
 # embedding.curvature = -2
-# # print(embedding)
-# # print(embedding._norm2())
-# # print(embedding.dimension)
-# # print(embedding.n_points)
+# print(embedding)
+# print(embedding._norm2())
+# print(embedding.dimension)
+# print(embedding.n_points)
 
 # new_points = np.array([[-0.5, 0.5, 0.5, -0.5], [-0.5, 0.5, -0.5, 0.5]])
 # norm_points = np.linalg.norm(new_points, axis=0)
@@ -457,10 +570,10 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 # # print(new_points)
 # embedding.points = new_points
 
-# # print(embedding.dimension)
-# # print(embedding.n_points)
+# print(embedding.dimension)
+# print(embedding.n_points)
 
-# # print(embedding.distance_matrix())
+# print(embedding.distance_matrix())
 
 # embedding.curvature = -.5
 # print(embedding.distance_matrix())
@@ -475,10 +588,10 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 
 # import numpy as np
 # import matplotlib.pyplot as plt
-# from mpl_toolkits.mplot3d import Axes3D
+# # from mpl_toolkits.mplot3d import Axes3D
 
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection='3d')
+# # fig = plt.figure()
+# # ax = fig.add_subplot(111, projection='3d')
 
 # def plot_hyperbolic_sheet_with_points(points, color='red', label='Scatter Points', max_radius=2):
 #     if isinstance(points, torch.Tensor):
@@ -516,11 +629,11 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 #     ax.legend()
     
 
-# Example usage:
+# # Example usage:
 # import torch
 
 # print(embedding.centroid())
-# plot_hyperbolic_sheet_with_points(embedding.points, color='red', label='Points', max_radius=2.5)
+# # plot_hyperbolic_sheet_with_points(embedding.points, color='red', label='Points', max_radius=2.5)
 # translation_vector = np.random.randn(2,1)/2  # 2D translation vector
 # norm_point = np.linalg.norm(translation_vector, axis=0)
 # translation_vector = np.vstack([np.sqrt(1 + norm_point**2), translation_vector])
@@ -528,7 +641,7 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 # print(translation_vector)
 # embedding.translate(translation_vector)
 # print(embedding.centroid())
-# plot_hyperbolic_sheet_with_points(embedding.points, color='blue', label='After Tranlation', max_radius=2.5)
+# # plot_hyperbolic_sheet_with_points(embedding.points, color='blue', label='After Tranlation', max_radius=2.5)
 # embedding.center()
 # print(embedding.centroid())
 # plt.show()
@@ -580,15 +693,15 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 # ])
 # target_embedding.rotate(rotation_matrix)
 
-# Define a noise variance
+# # Define a noise variance
 # noise_variance = 0.1  # Example variance
 # noisy_target_embedding = target_embedding.copy()
 
-# # Add Gaussian noise to the points with specified variance
+# # # Add Gaussian noise to the points with specified variance
 # noise = np.random.normal(0, np.sqrt(noise_variance), size=noisy_target_embedding.points.shape)
-# noisy_target_embedding.points += noise
+# # noisy_target_embedding.points += noise
 
-# Perform Procrustes alignment using the default mode
+# # Perform Procrustes alignment using the default mode
 # model = EuclideanProcrustes(source_embedding, noisy_target_embedding)
 # model = EuclideanProcrustes(source_embedding, target_embedding)
 # source_aligned = model.map(source_embedding)
@@ -605,11 +718,12 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 
 # # Compute the alignment costs for both modes
 # cost = compute_alignment_cost(source_aligned.points, target_embedding.points)
-# print(cost)
+# # print('asd')
+# # print(cost)
 
 
-# # Define noise variances
-# noise_variances = np.linspace(0, .1, 10000)  # Variances from 0 to 1
+# # # Define noise variances
+# noise_variances = np.linspace(0, .01, 1000)  # Variances from 0 to 1
 # alignment_errors = []
 
 # # Loop through different noise variances
@@ -618,6 +732,7 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
     
 #     # Add Gaussian noise to the points with specified variance
 #     noise = np.random.normal(0, np.sqrt(noise_variance), size=noisy_target_embedding.points.shape)
+#     # print(type(noisy_target_embedding.points))
 #     noisy_target_embedding.points += noise
 
 #     # Apply Procrustes alignment
@@ -628,17 +743,29 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 #     alignment_error = np.mean(np.linalg.norm(source_aligned.points - noisy_target_embedding.points, axis=0))
 #     alignment_errors.append(alignment_error)
 
+# # alignment_errors = np.array(alignment_errors, dtype=np.float64)
+# # noise_variances = np.array(noise_variances, dtype=np.float64)
+# # print(noise_variances)
+# # print(alignment_errors.to(np))
+# alignment_errors = np.array([float(x) for x in alignment_errors])
+# # print(type(alignment_errors))
+# # print(type(noise_variances))
+# print(len(alignment_errors))
+# print(len(noise_variances))
+
 # # Plot quality of embedding vs. noise variance
-# plt.scatter(noise_variances, alignment_errors, marker='o')
+# # print(noise_variances,alignment_errors)
+
+# # valid_indices = ~np.isnan(alignment_errors) & ~np.isinf(alignment_errors)
+# # print(type(noise_variances), type(alignment_errors))
+# # plt.scatter(np.arange(1,10), np.arange(1,10))
+# plt.scatter(noise_variances, alignment_errors)
+
 # plt.xlabel('Noise Variance')
 # plt.ylabel('Alignment Error')
 # plt.title('Quality of Embedding vs. Noise Variance')
 # plt.grid(True)
 # plt.show()
-
-
-
-
 
 
 
@@ -667,16 +794,16 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 # ])
 # target_embedding.rotate(rotation_matrix)
 
-# Define a noise variance
+# # # Define a noise variance
 # noise_variance = 0.1  # Example variance
 # noisy_target_embedding = target_embedding.copy()
 
-# Add Gaussian noise to the points with specified variance
+# # # Add Gaussian noise to the points with specified variance
 # noise = np.random.normal(0, np.sqrt(noise_variance), size=noisy_target_embedding.points.shape)
 # noisy_target_embedding.points += noise
 
-# Perform Procrustes alignment using the default mode
-# model = EuclideanProcrustes(source_embedding, noisy_target_embedding)
+# # # Perform Procrustes alignment using the default mode
+# # model = EuclideanProcrustes(source_embedding, noisy_target_embedding)
 # model = HyperbolicProcrustes(source_embedding, target_embedding)
 # source_aligned = model.map(source_embedding)
 # print(source_embedding.points)
@@ -696,7 +823,7 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 # import torch
 
 
-# # Define a function to compute the alignment cost (mean squared error between aligned and noisy target points)
+# Define a function to compute the alignment cost (mean squared error between aligned and noisy target points)
 # def compute_alignment_cost(src_embedding, trg_embedding):
 #     cost = sum((torch.norm(src_embedding.points[:, n]- trg_embedding.points[:, n]))**2 for n in range(src_embedding.n_points))
 #     return cost
@@ -759,25 +886,26 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 # points = np.random.randn(dimension,n_points)/10
 # embedding1 = EuclideanEmbedding(points = points, labels = labels)
 # print(embedding1)
-# multi_embedding.add_embedding('1',embedding1)
+# multi_embedding.append(embedding1)
 
 # labels = [str(i) for i in range(14)]
-# points = np.random.randn(4,14)/10
+# points = np.random.randn(2,14)/10
 # embedding2 = EuclideanEmbedding(points = points, labels = labels)
-# multi_embedding.add_embedding('b',embedding2)
+# multi_embedding.append(embedding2)
 # print(embedding2)
 
 # labels = [str(i) for i in range(5)]
-# points = np.random.randn(3,5)/10
+# points = np.random.randn(2,5)/10
 # embedding3 = EuclideanEmbedding(points = points, labels = labels)
-# multi_embedding.add_embedding('3',embedding3)
+# multi_embedding.append(embedding3)
 # print(embedding3)
 
 # labels = [str(i) for i in range(7)]
-# points = np.random.randn(4,7)/10
+# points = np.random.randn(2,7)/10
 # embedding4 = EuclideanEmbedding(points = points, labels = labels)
-# multi_embedding.add_embedding('4',embedding3)
+# multi_embedding.append(embedding3)
 # print(embedding4)
+# print(multi_embedding)
 
 # print(multi_embedding)
 # print(multi_embedding.embeddings)
@@ -786,52 +914,56 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 # multi_embedding.embeddings = embedding_dic
 # print(multi_embedding)
 # print(multi_embedding.embeddings)
-# print(multi_embedding.distance_matrix().shape)
-# print(multi_embedding.distance_matrix()[:4,:4])
-# print(multi_embedding.distance_matrix(func = torch.nanmedian)[:4,:4])
+# # print(multi_embedding.distance_matrix()[0])
+# print(multi_embedding.distance_matrix()[1])
+# print(multi_embedding.distance_matrix(func = torch.nanmedian))
 
 
 
 
+from tree_collections import MultiTree
+import treeswift as ts
+import numpy as np
+import torch
 
-# from tree_collections import MultiTree
-# import treeswift as ts
-# import numpy as np
-# import torch
-
-# tree1 = ts.read_tree_newick('path/to/treefile1.tre')
-# tree2 = ts.read_tree_newick('path/to/treefile2.tre')
-# multitree = MultiTree('name', [tree1, tree2])
-# print(multitree)
-# print(multitree.distance_matrix()[:4,:4])
-# multiembedding = multitree.embed(dimension = 2, geometry = 'hyperbolic')
+tree1 = ts.read_tree_newick('path/to/treefile1.tre')
+tree2 = ts.read_tree_newick('path/to/treefile2.tre')
+tree3 = ts.read_tree_newick('path/to/treefile2.tre')
+multitree = MultiTree('name', [tree1, tree2,tree3])
+print(multitree)
+# print(multitree.distance_matrix()[0][:4,:4])
+# multiembedding = multitree.embed(dim = 2, geometry = 'euclidean', precise_opt = True)
+# multiembedding = multitree.embed(dim = 2, geometry = 'hyperbolic', precise_opt = False)
 # print(multiembedding.embeddings)
-# print( multiembedding.distance_matrix()[:4,:4])
-# print( (multiembedding.distance_matrix()[:4,:4])**2)
-# print(multiembedding.distance_matrix()[:4,:4])
+# print( multiembedding.distance_matrix()[0][:4,:4])
+# print( (multiembedding.distance_matrix()[0][:4,:4])**2)
+# print(multiembedding.distance_matrix()[0][:4,:4])
 # print(multiembedding.embeddings)
 # print(multiembedding.reference_embedding())
 # x = multiembedding.reference_embedding(accurate = True)
 # print(x)
-# reference = multiembedding.reference_embedding()
-# # print( (reference.distance_matrix()[:4,:4])**2)
+# print(multiembedding.embeddings[0]._points)
+# reference = multiembedding.reference_embedding(dim = 2, precise_opt = True)
+# print( (reference.distance_matrix()[0][:4,:4])**2)
 # print(reference)
-# print( reference.distance_matrix()[:4,:4])
+# print( reference.distance_matrix()[0][:4,:4])
 
 
 
-# tree1 = ts.read_tree_newick('path/to/treefile1.tre')
-# tree2 = ts.read_tree_newick('path/to/treefile2.tre')
-# multitree = MultiTree('name', [tree1, tree2])
-# multiembedding = multitree.embed(dimension = 2)
-# print(multiembedding.embeddings['0'].points[:,:4])
-# print(multiembedding.embeddings['1'].points[:,:4])
-# print(multiembedding.distance_matrix()[:4,:4])
-# multiembedding.align()
-# print(multiembedding.embeddings['0'].points[:,:4])
-# print(multiembedding.embeddings['1'].points[:,:4])
-# print(multiembedding.distance_matrix()[:4,:4])
-
+multiembedding = multitree.embed(dim = 2,precise_opt = True)
+# print(multiembedding.embeddings[0]._points)
+# print(multiembedding.embeddings[0].points[:,:4])
+# print(multiembedding.embeddings[1].points[:,:4])
+# print(multiembedding.distance_matrix()[0][:4,:4])
+# print(multiembedding.embeddings[0].points)
+# print(multiembedding.embeddings[1].points)
+multiembedding.align(func = torch.nanmean,precise_opt = True)
+# multiembedding.align(func = torch.nanmean)
+print(multiembedding.embeddings[0].points)
+print(multiembedding.embeddings[1].points)
+# print(multiembedding.embeddings[0].points[:,:4])
+# print(multiembedding.embeddings[1].points[:,:4])
+# print(multiembedding.distance_matrix()[0][:4,:4])
 
 
 
@@ -882,3 +1014,55 @@ embedding = tree.embed(dimension=2, accurate=True, enable_movie=True,total_epoch
 # Access the mean and subspace.
 # mean = pca.get_mean()
 # subspace = pca.get_subspace()
+
+
+
+
+
+
+
+
+
+# # Initialize from a list of trees
+# # import treeswift as ts
+# # tree1 = ts.read_tree_newick("path/to/treefile1.tre")
+# # tree2 = ts.read_tree_newick("path/to/treefile2.tre")
+# # tree3 = ts.read_tree_newick("path/to/treefile3.tre")
+# # tree_list = [tree1, tree2, tree3]  # List of trees
+# # multitree = MultiTree('Name', tree_list)
+# print(multitree.trees[0].contents)
+# print(multitree.trees[1].contents)
+# # multitree.save("path/to/output_unnormalized.tre")
+# # x = multitree.normalize(batch_mode=False)
+# # print(x)
+# print(multitree.distance_matrix())
+# print(multitree.trees[0].contents)
+# print(multitree.trees[1].contents)
+# print(x)
+# multitree.save("path/to/output_normalized.tre")
+# print(multitree)
+# print(multitree.trees)
+# multitree.save("path/to/outputssss.tre")
+# logger.set_logger(False)
+# distance_matrix = multitree.distance_matrix(func=torch.nanmedian)[:4,:4]
+# distance_matrix, confidence_matrix = multitree.distance_matrix(func=torch.nanmedian,confidence= True)
+# print(confidence_matrix)
+# print(distance_matrix)
+# print(embedding)
+# print(embedding.embeddings)
+# embedding = multitree.embed(dimension=3, geometry='euclidean',accurate = True)
+# print(embedding)
+# print(embedding.embeddings)
+# embedding = multitree.embed(dimension=3, geometry='hyperbolic')
+# print(embedding)
+# print(embedding.embeddings)
+# embedding = multitree.embed(dimension=2, geometry='hyperbolic')
+# print(embedding)
+# print(embedding.embeddings)
+# embedding = multitree.embed(dimension=2, geometry='hyperbolic', accurate = True)
+# print(embedding)
+# print(embedding.embeddings)
+# multitree.save("path/to/output.tre")
+# import logger
+# import torch
+# import treeswift as ts

@@ -24,7 +24,7 @@ class HyperbolicProcrustes:
         target_embedding (Embedding): Target embedding instance.
     """
     
-    def __init__(self, source_embedding: 'Embedding', target_embedding: 'Embedding', precise_opt: bool = False):
+    def __init__(self, source_embedding: 'Embedding', target_embedding: 'Embedding', precise_opt: bool = False, p = 2):
         """
         Initializes the HyperbolicProcrustes instance.
 
@@ -39,6 +39,7 @@ class HyperbolicProcrustes:
         self.target_embedding = target_embedding
         self.target_model = target_embedding.model
         self._mapping_matrix = None
+        self.p = p
         
         self._log_info("Initializing HyperbolicProcrustes")
         self._validate_embeddings()
@@ -223,7 +224,7 @@ class HyperbolicProcrustes:
                 srouce_embedding.translate(b_new)
                 # Compute the cost function
                 cost = sum(
-                    (srouce_embedding.poincare_distance(srouce_embedding._points[:, n], target_embedding._points[:, n]))**2 
+                    torch.abs(srouce_embedding.poincare_distance(srouce_embedding._points[:, n], target_embedding._points[:, n]))**(self.p)
                     for n in range(srouce_embedding.n_points)
                 )
                 cost.backward(retain_graph=True)
@@ -288,7 +289,9 @@ class EuclideanProcrustes:
     
     def __init__(self, 
                  source_embedding: 'Embedding', 
-                 target_embedding: 'Embedding'):
+                 target_embedding: 'Embedding',
+                 precise_opt: bool = False,
+                 p = 2):
         """
         Initializes the EuclideanProcrustes instance.
 
@@ -300,6 +303,7 @@ class EuclideanProcrustes:
         self.source_embedding = source_embedding
         self.target_embedding = target_embedding
         self._mapping_matrix = None
+        self.p = p
 
         self._log_info("Initializing EuclideanProcrustes")
         self._validate_embeddings()
@@ -348,6 +352,19 @@ class EuclideanProcrustes:
         trg_center = trg_embedding.centroid()
         trg_embedding.center()
 
+        # Filter points by intersecting labels
+        source_labels = set(src_embedding._labels)
+        target_labels = set(trg_embedding._labels)
+        common_labels = list(source_labels & target_labels)
+        if not common_labels:
+            raise ValueError("No matching labels found between source and target embeddings.")
+
+
+        src_indices = [src_embedding._labels.index(label) for label in common_labels]
+        target_indices = [trg_embedding._labels.index(label) for label in common_labels]
+
+        src_embedding._points = src_embedding._points[:, src_indices]
+        trg_embedding._points = trg_embedding._points[:, target_indices]
 
         # Compute optimal rotation matrix using SVD
         U, _, Vt = torch.svd(torch.mm(trg_embedding.points, src_embedding.points.T))

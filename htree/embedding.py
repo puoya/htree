@@ -1132,9 +1132,10 @@ class MultiEmbedding:
             self._log_info("No embeddings to align.")
             return
 
-        reference_embedding = self.reference_embedding(**kwargs)
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k != 'func'}
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != 'p'}
+        reference_embedding = self.reference_embedding(**filtered_kwargs)
 
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != 'func'}
         if self.curvature < 0:
             for i, embedding in enumerate(self.embeddings):
                 model = procrustes.HyperbolicProcrustes(embedding, reference_embedding,**filtered_kwargs)

@@ -24,14 +24,14 @@ class HyperbolicProcrustes:
         target_embedding (Embedding): Target embedding instance.
     """
     
-    def __init__(self, source_embedding: 'Embedding', target_embedding: 'Embedding', mode: str = 'default'):
+    def __init__(self, source_embedding: 'Embedding', target_embedding: 'Embedding', precise_opt: bool = False, p = 2):
         """
         Initializes the HyperbolicProcrustes instance.
 
         Args:
             source_embedding (Embedding): The source embedding to map from.
             target_embedding (Embedding): The target embedding to map to.
-            mode (str): Mode of computation, either 'default' or 'accurate'.
+            precise_opt (bool): Mode of computation, False for 'inaccurate'.
         """
         self._current_time = get_time() or datetime.now()
         self.source_embedding = source_embedding
@@ -39,10 +39,11 @@ class HyperbolicProcrustes:
         self.target_embedding = target_embedding
         self.target_model = target_embedding.model
         self._mapping_matrix = None
+        self.p = p
         
         self._log_info("Initializing HyperbolicProcrustes")
         self._validate_embeddings()
-        self._compute_mapping(mode=mode)
+        self._compute_mapping(precise_opt=precise_opt)
 
     def _log_info(self, message: str) -> None:
         """
@@ -154,12 +155,12 @@ class HyperbolicProcrustes:
         Ru[1:, 1:] = U
         return Ru
 
-    def _compute_mapping(self, mode: str = 'default') -> None:
+    def _compute_mapping(self, precise_opt: bool = False) -> None:
         """
         Computes the Hyperbolic orthogonal Procrustes mapping and associated cost.
 
         Args:
-            mode (str): Computation mode, 'default' for a basic approach or 'accurate' for refined optimization.
+            precise_opt (bool): Computation mode, False for a basic approach or True for refined optimization.
         """
         self._log_info("Computing mapping")
 
@@ -209,8 +210,7 @@ class HyperbolicProcrustes:
         target_embedding = self.target_embedding.copy()
         target_embedding._points = target_embedding._points[:, target_indices]
 
-
-        if mode == 'accurate':
+        if precise_opt:
             src_points = srouce_embedding._points
             b = torch.zeros(D, requires_grad=True,dtype=src_points.dtype)
             R = torch.eye(D, requires_grad=True,dtype=src_points.dtype)
@@ -224,7 +224,7 @@ class HyperbolicProcrustes:
                 srouce_embedding.translate(b_new)
                 # Compute the cost function
                 cost = sum(
-                    (srouce_embedding.poincare_distance(srouce_embedding._points[:, n], target_embedding._points[:, n]))**2 
+                    torch.abs(srouce_embedding.poincare_distance(srouce_embedding._points[:, n], target_embedding._points[:, n]))**(self.p)
                     for n in range(srouce_embedding.n_points)
                 )
                 cost.backward(retain_graph=True)
@@ -289,20 +289,21 @@ class EuclideanProcrustes:
     
     def __init__(self, 
                  source_embedding: 'Embedding', 
-                 target_embedding: 'Embedding'):
+                 target_embedding: 'Embedding',
+                 precise_opt: bool = False,
+                 p = 2):
         """
         Initializes the EuclideanProcrustes instance.
 
         Args:
             source_embedding (Embedding): The source embedding to map from.
             target_embedding (Embedding): The target embedding to map to.
-            mode (str): Mode of computation, either 'default' or 'accurate'.
-            enable_logging (bool): If True, enables logging. Default is False.
         """
         self._current_time = get_time() or datetime.now()
         self.source_embedding = source_embedding
         self.target_embedding = target_embedding
         self._mapping_matrix = None
+        self.p = p
 
         self._log_info("Initializing EuclideanProcrustes")
         self._validate_embeddings()
@@ -351,6 +352,19 @@ class EuclideanProcrustes:
         trg_center = trg_embedding.centroid()
         trg_embedding.center()
 
+        # Filter points by intersecting labels
+        source_labels = set(src_embedding._labels)
+        target_labels = set(trg_embedding._labels)
+        common_labels = list(source_labels & target_labels)
+        if not common_labels:
+            raise ValueError("No matching labels found between source and target embeddings.")
+
+
+        src_indices = [src_embedding._labels.index(label) for label in common_labels]
+        target_indices = [trg_embedding._labels.index(label) for label in common_labels]
+
+        src_embedding._points = src_embedding._points[:, src_indices]
+        trg_embedding._points = trg_embedding._points[:, target_indices]
 
         # Compute optimal rotation matrix using SVD
         U, _, Vt = torch.svd(torch.mm(trg_embedding.points, src_embedding.points.T))
