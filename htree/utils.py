@@ -262,7 +262,7 @@ def hyperbolic_embedding(dist_mat: torch.Tensor, dim: int, **kwargs):
     if params['lr_fn'] is None:
         params['lr_fn'] = lambda x1, x2, x3: compute_lr(x1, x2, x3, scale=log_span(dist_mat).item())
     if params['save_mode']:
-        path = f'{conf.OUTPUT_DIRECTORY}/{params['time_stamp'].strftime('%Y-%m-%d_%H-%M-%S')}'
+        path = f"{conf.OUTPUT_DIRECTORY}/{params['time_stamp'].strftime('%Y-%m-%d_%H-%M-%S')}"
         os.makedirs(path, exist_ok=True)
 
     def cost_fn(pts: torch.Tensor, dist_mat: torch.Tensor, weight_mat: torch.Tensor, s: torch.Tensor = None):

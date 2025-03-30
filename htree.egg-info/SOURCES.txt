@@ -10,7 +10,6 @@ htree/embedding.py
 htree/logger.py
 htree/optimizer.py
 htree/procrustes.py
-htree/spaceform_pca_lib.py
 htree/test.py
 htree/test_tree.py
 htree/tree_collections.py

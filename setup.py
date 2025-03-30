@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="htree",
-    version="3.2.0",  # Adjust your version accordingly
+    version="3.2.1",  # Adjust your version accordingly
     description="A library for tree reading, embedding, and analysis of phylogenetic trees",
     author="Puoya Tabaghi",
     author_email="ptabaghi@ucsd.edu",
