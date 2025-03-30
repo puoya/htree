@@ -1,9 +1,0 @@
-numpy
-scipy
-matplotlib
-scikit-learn
-torch
-treeswift
-tqdm
-imageio
-imageio-ffmpeg
