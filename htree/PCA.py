@@ -165,7 +165,7 @@ class PCA:
         Returns:
             str: A summary string for the PCA instance.
         """
-        return (f"PCA(geometry={self.geometry}, "
-                f"original_dimension={self.points.shape[0]}, "
+        return (f"PCA(geometry={self.embedding._geometry}, "
+                f"original_dimension={self.embedding.shape[0]}, "
                 f"mean_computed={self.mean is not None}, "
                 f"subspace_computed={self.subspace is not None})")

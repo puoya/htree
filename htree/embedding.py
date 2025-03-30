@@ -123,7 +123,7 @@ class Embedding:
 
         self._points = value  # Store as torch.Tensor
         self._update_dimensions()
-        if self.geometry == 'hyperbolic':
+        if self._geometry == 'hyperbolic':
             self._validate_norms() 
         self._log_info(f"Updated points with shape={self._points.shape}")
     ################################################################################################
