@@ -1,159 +1,169 @@
 import numpy as np
-import logging
 from datetime import datetime
 import torch
-import spaceform_pca_lib as sfpca
-
+from logger import get_logger, logging_enabled, get_time
+# import utils
+from . import utils
 
 class PCA:
     """
-    A class to perform Principal Component Analysis (PCA) on embeddings and maintain a reusable mapping.
+    Principal Component Analysis (PCA) for different embedding geometries.
+
+    This class performs PCA on a given embedding object and computes a reusable mapping
+    for dimensionality reduction. It supports both 'euclidean' and 'hyperbolic' geometries.
 
     Attributes:
-        embedding: The input embedding to perform PCA on.
-        geometry (str): Geometry of the embedding ('hyperbolic' or 'euclidean').
-        model (str): Model of the embedding (e.g., 'loid', 'cartesian').
-        _mapping_matrix (np.ndarray): Matrix that defines the PCA mapping.
-        mean (np.ndarray): Mean of the input points.
-        subspace (np.ndarray): Principal components (subspace) of the input points.
+        embedding: The input embedding object which should have attributes:
+            - geometry (str): Either 'euclidean' or 'hyperbolic'.
+            - points (torch.Tensor): A tensor of points with shape [dim, n_points].
+            - model (str): Model of the embedding (e.g., 'loid', 'cartesian').
+            - centroid (callable): A method returning the centroid of the embedding points.
+            - switch_model (callable): A method to switch the model (e.g., to 'loid') if needed.
+        mean (torch.Tensor): The computed mean/centroid of the embedding points.
+        subspace (torch.Tensor): The PCA mapping matrix (basis of principal components).
     """
 
-    def __init__(self, embedding, enable_logging=False):
+    def __init__(self, embedding):
         """
-        Initializes the PCA instance.
+        Initializes the PCA instance and computes the mapping.
+
+        The initialization process validates the embedding and immediately computes the PCA mapping,
+        based on the geometry of the embedding.
 
         Args:
-            embedding: The embedding on which PCA is performed.
-            enable_logging (bool): If True, enables logging. Default is False.
+            embedding: An embedding object containing at least the attributes:
+                - geometry: 'euclidean' or 'hyperbolic'
+                - points: A torch.Tensor of data points
+                - model: A string identifier for the embedding model (e.g., 'loid')
+                - centroid(): A method that computes the centroid of the points
+                - switch_model(): (for hyperbolic) A method to switch the model if necessary
+
+        Raises:
+            ValueError: If the embedding points are empty.
         """
         self.embedding = embedding
         self._geometry = embedding.geometry
         self._points = embedding.points
         self.mean = None
-        self._mapping_matrix = None
+        self.subspace = None
 
-        if enable_logging:
-            self._setup_logging()
         self._log_info("Initializing PCA")
         self._validate_embedding()
         self._compute_mapping()
 
-    def _log_info(self, message: str) -> None:
+    def _log_info(self, message: str):
         """
-        Logs an informational message.
+        Logs an informational message if global logging is enabled.
 
         Args:
-            message (str): The message to log.
+            message (str): The log message.
         """
-        if logging_enabled():  # Check if logging is globally enabled
-            get_logger().info(message)
+        if logging_enabled(): get_logger().info(message) 
 
     def _validate_embedding(self):
-        """Validate the input embedding."""
+        """
+        Validates the input embedding.
+
+        Ensures that the embedding contains data points and logs the validation status.
+
+        Raises:
+            ValueError: If the embedding points tensor is empty.
+        """
         if self._points.size == 0:
             raise ValueError("Embedding points are empty. PCA cannot be performed.")
         self._log_info("Embedding validation complete.")
 
     def _compute_mapping(self):
         """
-        Compute the PCA mapping matrix for the embedding.
-        The method differs based on the geometry of the embedding space.
+        Computes the PCA mapping matrix based on the embedding geometry.
+
+        For 'euclidean' geometry:
+            - Computes the centroid using the embedding's centroid() method.
+            - Centers the data and computes the Gram matrix.
+            - Performs eigenvalue decomposition to obtain the principal components.
+        For 'hyperbolic' geometry:
+            - If the embedding model is not 'loid', it switches to the 'loid' model.
+            - Computes the hyperbolic centroid and mapping via a specialized utility function.
+        
+        Raises:
+            ValueError: If the embedding geometry is neither 'euclidean' nor 'hyperbolic'.
         """
-        from sklearn.decomposition import PCA
-
+    
         if self._geometry == 'euclidean':
-            # Compute the centroid of the points
-
-            centroid = self.embedding.centroid()
-            self.mean = centroid
-
-            centered_points = self._points - centroid.reshape(-1, 1)
-            gram_matrix = np.dot(centered_points, centered_points.T)
-
-            eigenvalues, eigenvectors = np.linalg.eigh(gram_matrix)
-
-            sorted_indices = np.argsort(eigenvalues)[::-1]
-            sorted_eigenvectors = eigenvectors[:, sorted_indices]
-            components = sorted_eigenvectors.T
-
-            self._mapping_matrix = torch.tensor(components)
-            
+            c = self.embedding.centroid()
+            self.mean = c
+            centered = self._points - c.view(-1, 1)
+            gram = centered @ centered.T
+            eigvals, eigvecs = torch.linalg.eigh(gram)
+            self.subspace = eigvecs[:, torch.argsort(eigvals, descending=True)].T
         elif self._geometry == 'hyperbolic':
             # Switch to Loid model if not already in it
             if self.embedding.model != 'loid':
                 self.embedding = self.embedding.switch_model()
                 self._points = self.embedding.points
             # Compute the centroid of the points in hyperbolic space
-            centroid = self.embedding.centroid()
-            self.mean = centroid
-            subspace = sfpca.estimate_hyperbolic_subspace(self._points)
-            self._mapping_matrix = subspace.H
+            base, H = utils.hyperbolic_PCA(self._points)
+            self.subspace = H
+            self.mean = base
         else:
             raise ValueError(f"Unsupported geometry: {self.geometry}. "
                              "Valid options are 'euclidean' or 'hyperbolic'.")
 
         self._log_info("Mapping matrix and subspace computed.")
 
-
-    def map_to_dimension(self, target_dimension):
+    def map_to(self, dim):
         """
-        Map the embedding to a lower-dimensional space using the precomputed mapping.
+        Reduces the dimensionality of the embedding using the computed PCA mapping.
+
+        Depending on the geometry, this function applies the PCA mapping to reduce the input 
+        embedding's dimensions to the target 'dim'. It returns a new embedding instance with 
+        the reduced data.
 
         Args:
-            target_dimension (int): The target number of dimensions.
+            dim (int): The target dimension for the reduced embedding. Must be less than or equal
+                       to the number of principal components available.
 
         Returns:
-            A new embedding with reduced dimensions, retaining the original geometry.
-        """
-        if target_dimension > self._mapping_matrix.shape[1]:
-            raise ValueError("Target dimension exceeds the dimensions of the computed subspace.")
+            A new embedding object with its 'points' attribute updated to the reduced data.
 
+        Raises:
+            ValueError: If the requested target dimension exceeds the computed subspace dimensions.
+            ValueError: If the geometry of the embedding is unsupported.
+        """
+        if dim > self.subspace.shape[1]:
+            raise ValueError("Target dimension exceeds computed subspace dimensions.")
 
         if self._geometry == 'euclidean':
-            centroid = self.mean
-            # Center the points by subtracting the centroid
-            centered_points = self._points - centroid.reshape(-1, 1)
-            reduced_points = self._mapping_matrix[:, :target_dimension].T @ centered_points
-        elif self._geometry == 'hyperbolic':
-            dim, N = np.shape(self._points)
-            dim -= 1
+            c = self.mean
+            centered = self._points - c.reshape(-1, 1)
+            reduced = self.subspace[:, :dim].T @ centered
 
-            J = np.eye(dim + 1)
+        elif self._geometry == 'hyperbolic':
+            J = torch.eye(self._points.shape[0], device=self._points.device, dtype=self._points.dtype)
             J[0, 0] = -1
 
-            H = self._mapping_matrix[:, :target_dimension + 1]
-            Jk = np.eye(target_dimension + 1)
+            H, Jk = self.subspace[:, :dim + 1], torch.eye(dim + 1, device=self._points.device, dtype=self._points.dtype)
             Jk[0, 0] = -1
 
-            # projection =  H @ Jk @ H.T @  J 
-            projection =  Jk @ H.T @  J 
-            reduced_points = np.matmul(projection,self._points).numpy()
-            for n in range(N):
-                x = reduced_points[:, n]
-                reduced_points[:, n] = x / np.sqrt(-sfpca.prod(x,x))
+            reduced = Jk @ H.T @ J @ self._points
+            reduced /= torch.sqrt(-utils.J_norm(reduced)).unsqueeze(0)
 
         else:
-            raise ValueError(f"Unsupported geometry: {self.geometry}. "
-                             "Valid options are 'euclidean' or 'hyperbolic'.")
-
-
-        return self._create_embedding(reduced_points)
-
-    def _create_embedding(self, points):
-        """Create a new embedding instance with the given points."""
+            raise ValueError(f"Unsupported geometry: {self._geometry}. Options: 'euclidean' or 'hyperbolic'.")
         new_embedding = self.embedding.copy()
-        new_embedding.points = points
+        new_embedding.points = reduced
         return new_embedding
 
-    def get_mean(self):
-        """Return the mean of the input points."""
-        return self.mean
-
-    def get_subspace(self):
-        """Return the principal components (subspace)."""
-        return self._mapping_matrix
-
     def __repr__(self):
+        """
+        Returns a string representation of the PCA instance.
+
+        The representation includes the geometry type, original dimension of the embedding,
+        and status of mean and subspace computation.
+
+        Returns:
+            str: A summary string for the PCA instance.
+        """
         return (f"PCA(geometry={self.geometry}, "
                 f"original_dimension={self.points.shape[0]}, "
                 f"mean_computed={self.mean is not None}, "
