@@ -414,127 +414,250 @@ def hyperbolic_PCA(X, d=None):
     H = torch.cat([base.reshape(D, 1), e_vecs[:, p_mask][:, torch.argsort(p_vals, descending=True)]], dim=1)
     return base, H
 ###########################################################################
-def j_decomposition(Cx, d):
-    tol, ev_tol = 1e-10, 1e-20
-    D = Cx.shape[0] - 1
-    J = torch.eye(D+1, dtype=Cx.dtype, device=Cx.device)
-    J[0, 0] = -1
+def j_decomposition(Cx, d, power_iters=100):
+    device = Cx.device
+    dtype = torch.float64
+    n = Cx.shape[0]  # n = d + 1
 
-    # Use lists to accumulate results and later convert to tensors.
+    # Represent J as a 1D tensor: J = diag([-1, 1, ..., 1])
+    j_vec = torch.ones(n, dtype=dtype, device=device)
+    j_vec[0] = -1
+
+    # Helper to apply J via elementwise multiplication.
+    def j_mul(x):
+        return j_vec * x
+
+    # J-norm defined as xᵀ J x.
+    def J_norm(x):
+        return torch.dot(x, j_mul(x))
+
+    # Normalize the base eigenvector: force p[0] >= 0 and scale so that pᵀ J p = -1.
+    def normalize_p(x):
+        if x[0] < 0:
+            x = -x
+        factor = torch.sqrt(-J_norm(x))
+        return x / factor
+
+    # Normalize other eigenvectors: scale so that vᵀ J v = 1.
+    def normalize_v(x):
+        factor = torch.sqrt(J_norm(x))
+        return x / factor
+
+    # Power iteration refinement for an initial eigenvector candidate.
+    def refine_eigenvector(A, x, normalize_fn, iterations=100):
+        for _ in range(iterations):
+            x = A @ x
+            x = normalize_fn(x)
+        return x
+
+    # Save the original Frobenius norm for the stopping criterion.
+    orig_frob = torch.norm(Cx, p="fro")
+    threshold = orig_frob / (10**12)
+    tol = 1e-6  # tolerance for imaginary parts
+
     evals_list = []
     signs_list = []
-    evecs = None  # Will store eigenvectors as columns
-    ###########################################################################
-    def expected_sgn(d_val):
-        """Return -1 if d_val is 1, else return 1."""
-        return -1 if d_val == 1 else 1
-    ###########################################################################
-    def cost(v1, v2):
-        # Assuming v1 and v2 are 1D tensors.
-        dot_val = torch.dot(v1, v2).abs()
-        norm1 = torch.linalg.norm(v1)
-        norm2 = torch.linalg.norm(v2)
-        return 1 - dot_val / (norm1 * norm2)
-    ###########################################################################
-    def j_eval(v):
-        # v is assumed to be a column vector.
-        num = torch.linalg.norm(Cx @ J @ Cx @ J @ v)
-        den = torch.linalg.norm(v)
-        return torch.sqrt(num / den)
-    ###########################################################################
-    def j_orthonormalize(vec, basis, sign_arr):
-        # Ensure vec is at least 2D column vector.
-        if vec.dim() == 1:
-            vec = vec.unsqueeze(1)
-        else:
-            vec = vec.reshape(-1, 1)
-        if basis is not None and basis.numel() != 0:
-            # Make sure basis is 2D.
-            if basis.dim() == 1:
-                basis = basis.unsqueeze(1)
-            # Multiply: basis @ diag(sign_arr) @ basis.T
-            diag_sign = torch.diag(torch.tensor(sign_arr, dtype=Cx.dtype, device=Cx.device))
-            proj = basis @ diag_sign @ basis.T
-            vec = vec - proj @ J @ vec
-        norm_val = torch.linalg.norm(vec)
-        if norm_val > tol:
-            vec = vec / norm_val
-            norm_j = torch.sqrt(torch.abs((vec.T @ J @ vec)))
-            if norm_j > tol:
-                return (vec / norm_j).flatten(), True
-        return vec.flatten(), False
-    ###########################################################################
-    def init_vec(target_sign):
-        nonlocal evecs
-        # Compute residual matrix: if there are already computed eigenvectors, subtract projection.
-        if evecs is not None and evecs.numel() != 0:
-            # Convert evals_list to tensor for diag.
-            evals_tensor = torch.tensor(evals_list, dtype=Cx.dtype, device=Cx.device)
-            diag_evals = torch.diag(evals_tensor)
-            res = Cx - evecs @ diag_evals @ evecs.T
-        else:
-            res = Cx.clone()
-        # Scale res.
-        res = res / torch.max(torch.abs(res))
-        # Compute eigen-decomposition of (res @ J)
-        A = res @ J
+    evecs_list = []
+
+    # We use an explicit diagonal matrix for J (n is small).
+    J_mat = torch.diag(j_vec)
+    count = 0
+
+    # --- Base eigenpair computation: leading eigenvector of A = Cx @ J.
+    A = Cx @ J_mat
+    eigvals, eigvecs = torch.linalg.eig(A)
+    # Choose the eigenvector with the largest (absolute) eigenvalue.
+    i = torch.argmax(eigvals.abs())
+    candidate = eigvecs[:, i]
+    # If candidate has significant imaginary parts, refine it via power iterations.
+    if torch.max(candidate.imag.abs()) > tol:
+        candidate = candidate.real
+        candidate = refine_eigenvector(A, candidate, normalize_p, iterations=power_iters)
+    else:
+        candidate = candidate.real
+    p = normalize_p(candidate)
+    p_eval = (j_mul(p) @ (Cx @ j_mul(p))).item()
+    p_sign = torch.sign(torch.dot(p, j_mul(p))).item()
+
+    evals_list.append(p_eval)
+    signs_list.append(p_sign)
+    evecs_list.append(p.clone())
+
+    # Deflate: subtract the contribution of the base eigenpair.
+    Cx = Cx - p_eval * torch.outer(p, p)
+    count += 1
+
+    # --- Compute subsequent eigenpairs until we reach d or the residual is very small.
+    while count < d and torch.norm(Cx, p="fro") >= threshold:
+        A = Cx @ J_mat
         eigvals, eigvecs = torch.linalg.eig(A)
-        # Select eigenvector corresponding to largest eigenvalue magnitude.
-        magnitudes = eigvals.abs()
-        max_index = torch.argmax(magnitudes)
-        vec = eigvecs[:, max_index]
-        # Use only the real part.
-        vec = vec.real
-        vec, ok = j_orthonormalize(vec, evecs, signs_list)
-        # Adjust until conditions are met.
-        while (not ok) or (J_norm(vec) * target_sign < 0):
-            perturb = tol * torch.randn(res.shape[0], device=Cx.device, dtype=Cx.dtype)
-            vec, ok = j_orthonormalize(vec + perturb, evecs, signs_list)
-        return vec
-    ###########################################################################
-    def rand_vec(target_sign):
-        while True:
-            vec, ok = j_orthonormalize(torch.randn(D + 1, device=Cx.device, dtype=Cx.dtype), evecs, signs_list)
-            if ok and J_norm(vec) * target_sign > 0:
-                return vec
-    ###########################################################################
-    condition = True
-    while condition:
-        target_sign = expected_sgn(len(evals_list) + 1)
-        v = init_vec(target_sign)
-        errors = [1.0]
-
-        while True:
-            v2, ok = j_orthonormalize((Cx @ J @ v), evecs, signs_list)
-            if not ok:
-                v2 = rand_vec(target_sign)
-                break
-            err = cost(v, v2)
-            if err < ev_tol and (J_norm(v2) * target_sign) >= 0:
-                break
-            errors.append(min(errors[-1], err))
-            v = v2  # update v for next iteration if needed
-
-        v, ok = j_orthonormalize(v2, evecs, signs_list)
-        if (not ok) or (J_norm(v) * target_sign < 0):
-            v = rand_vec(target_sign)
-            current_sign = J_norm(v)
+        i = torch.argmax(eigvals.abs())
+        candidate = eigvecs[:, i]
+        if torch.max(candidate.imag.abs()) > tol:
+            candidate = candidate.real
+            candidate = refine_eigenvector(A, candidate, normalize_v, iterations=power_iters)
         else:
-            current_sign = torch.sign(J_norm(v))
+            candidate = candidate.real
+        v = normalize_v(candidate)
+        v_eval = (j_mul(v) @ (Cx @ j_mul(v))).item()
+        v_sign = torch.sign(torch.dot(v, j_mul(v))).item()
 
-        v = v.reshape(-1, 1)
-        evals_list.append(j_eval(v))
-        signs_list.append(current_sign)
-        if evecs is None or evecs.numel() == 0:
-            evecs = v
-        else:
-            evecs = torch.cat((evecs, v), dim=1)
+        evals_list.append(v_eval)
+        signs_list.append(v_sign)
+        evecs_list.append(v.clone())
 
-        # Terminate when we have d positive signs and at least 1 negative sign.
-        if (sum(1 for s in signs_list if s > 0) == d) and (sum(1 for s in signs_list if s < 0) >= 1):
-            condition = False
+        Cx = Cx - v_eval * torch.outer(v, v)
+        count += 1
 
-    # Convert lists to tensors.
-    evals = torch.tensor(evals_list, dtype=Cx.dtype, device=Cx.device)
-    signs = torch.tensor(signs_list, dtype=Cx.dtype, device=Cx.device)
-    return evals, signs, evecs
+    # --- If fewer than d eigenpairs were obtained, compute the rest as zero eigenvalues.
+    while count < d:
+        print('nooooo')
+        # Start with a random vector.
+        x = torch.randn(n, dtype=dtype, device=device)
+        # Remove components in the directions of already computed eigenvectors.
+        for j in range(len(evecs_list)):
+            u = evecs_list[j]
+            # Use the stored sign; note: uᵀ J u is -1 for p and 1 for other vectors.
+            s = signs_list[j]
+            proj = torch.dot(x, j_mul(u))  # [x, u]
+            x = x - s * proj * u
+        # Normalize the resulting vector.
+        x = normalize_v(x)
+        # Optionally, one might refine x with power iterations—but here Cx is near zero so we simply accept it.
+        v_eval = 0.0  # by construction these extra directions have eigenvalue 0.
+        v_sign = torch.sign(torch.dot(x, j_mul(x))).item()
+        evals_list.append(v_eval)
+        signs_list.append(v_sign)
+        evecs_list.append(x.clone())
+        count += 1
+
+    # Convert results to tensors and then to NumPy arrays.
+    evals_tensor = torch.tensor(evals_list, dtype=dtype, device=device)
+    signs_tensor = torch.tensor(signs_list, dtype=dtype, device=device)
+    evecs_tensor = torch.stack(evecs_list, dim=1)  # each eigenvector as a column
+    return evals_tensor, signs_tensor, evecs_tensor
+
+# def j_decomposition(Cx, d):
+#     tol, ev_tol = 1e-10, 1e-20
+#     D = Cx.shape[0] - 1
+#     J = torch.eye(D+1, dtype=Cx.dtype, device=Cx.device)
+#     J[0, 0] = -1
+
+#     # Use lists to accumulate results and later convert to tensors.
+#     evals_list = []
+#     signs_list = []
+#     evecs = None  # Will store eigenvectors as columns
+#     ###########################################################################
+#     def expected_sgn(d_val):
+#         """Return -1 if d_val is 1, else return 1."""
+#         return -1 if d_val == 1 else 1
+#     ###########################################################################
+#     def cost(v1, v2):
+#         # Assuming v1 and v2 are 1D tensors.
+#         dot_val = torch.dot(v1, v2).abs()
+#         norm1 = torch.linalg.norm(v1)
+#         norm2 = torch.linalg.norm(v2)
+#         return 1 - dot_val / (norm1 * norm2)
+#     ###########################################################################
+#     def j_eval(v):
+#         # v is assumed to be a column vector.
+#         num = torch.linalg.norm(Cx @ J @ Cx @ J @ v)
+#         den = torch.linalg.norm(v)
+#         return torch.sqrt(num / den)
+#     ###########################################################################
+#     def j_orthonormalize(vec, basis, sign_arr):
+#         # Ensure vec is at least 2D column vector.
+#         if vec.dim() == 1:
+#             vec = vec.unsqueeze(1)
+#         else:
+#             vec = vec.reshape(-1, 1)
+#         if basis is not None and basis.numel() != 0:
+#             # Make sure basis is 2D.
+#             if basis.dim() == 1:
+#                 basis = basis.unsqueeze(1)
+#             # Multiply: basis @ diag(sign_arr) @ basis.T
+#             diag_sign = torch.diag(torch.tensor(sign_arr, dtype=Cx.dtype, device=Cx.device))
+#             proj = basis @ diag_sign @ basis.T
+#             vec = vec - proj @ J @ vec
+#         norm_val = torch.linalg.norm(vec)
+#         if norm_val > tol:
+#             vec = vec / norm_val
+#             norm_j = torch.sqrt(torch.abs((vec.T @ J @ vec)))
+#             if norm_j > tol:
+#                 return (vec / norm_j).flatten(), True
+#         return vec.flatten(), False
+#     ###########################################################################
+#     def init_vec(target_sign):
+#         nonlocal evecs
+#         # Compute residual matrix: if there are already computed eigenvectors, subtract projection.
+#         if evecs is not None and evecs.numel() != 0:
+#             # Convert evals_list to tensor for diag.
+#             evals_tensor = torch.tensor(evals_list, dtype=Cx.dtype, device=Cx.device)
+#             diag_evals = torch.diag(evals_tensor)
+#             res = Cx - evecs @ diag_evals @ evecs.T
+#         else:
+#             res = Cx.clone()
+#         # Scale res.
+#         res = res / torch.max(torch.abs(res))
+#         # Compute eigen-decomposition of (res @ J)
+#         A = res @ J
+#         eigvals, eigvecs = torch.linalg.eig(A)
+#         # Select eigenvector corresponding to largest eigenvalue magnitude.
+#         magnitudes = eigvals.abs()
+#         max_index = torch.argmax(magnitudes)
+#         vec = eigvecs[:, max_index]
+#         # Use only the real part.
+#         vec = vec.real
+#         vec, ok = j_orthonormalize(vec, evecs, signs_list)
+#         # Adjust until conditions are met.
+#         while (not ok) or (J_norm(vec) * target_sign < 0):
+#             perturb = tol * torch.randn(res.shape[0], device=Cx.device, dtype=Cx.dtype)
+#             vec, ok = j_orthonormalize(vec + perturb, evecs, signs_list)
+#         return vec
+#     ###########################################################################
+#     def rand_vec(target_sign):
+#         while True:
+#             vec, ok = j_orthonormalize(torch.randn(D + 1, device=Cx.device, dtype=Cx.dtype), evecs, signs_list)
+#             if ok and J_norm(vec) * target_sign > 0:
+#                 return vec
+#     ###########################################################################
+#     condition = True
+#     while condition:
+#         target_sign = expected_sgn(len(evals_list) + 1)
+#         v = init_vec(target_sign)
+#         errors = [1.0]
+
+#         while True:
+#             v2, ok = j_orthonormalize((Cx @ J @ v), evecs, signs_list)
+#             if not ok:
+#                 v2 = rand_vec(target_sign)
+#                 break
+#             err = cost(v, v2)
+#             if err < ev_tol and (J_norm(v2) * target_sign) >= 0:
+#                 break
+#             errors.append(min(errors[-1], err))
+#             v = v2  # update v for next iteration if needed
+
+#         v, ok = j_orthonormalize(v2, evecs, signs_list)
+#         if (not ok) or (J_norm(v) * target_sign < 0):
+#             v = rand_vec(target_sign)
+#             current_sign = J_norm(v)
+#         else:
+#             current_sign = torch.sign(J_norm(v))
+
+#         v = v.reshape(-1, 1)
+#         evals_list.append(j_eval(v))
+#         signs_list.append(current_sign)
+#         if evecs is None or evecs.numel() == 0:
+#             evecs = v
+#         else:
+#             evecs = torch.cat((evecs, v), dim=1)
+
+#         # Terminate when we have d positive signs and at least 1 negative sign.
+#         if (sum(1 for s in signs_list if s > 0) == d) and (sum(1 for s in signs_list if s < 0) >= 1):
+#             condition = False
+
+#     # Convert lists to tensors.
+#     evals = torch.tensor(evals_list, dtype=Cx.dtype, device=Cx.device)
+#     signs = torch.tensor(signs_list, dtype=Cx.dtype, device=Cx.device)
+#     return evals, signs, evecs
