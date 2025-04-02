@@ -22,8 +22,15 @@ from tqdm import tqdm
 # import utils
 # import embedding
 # from logger import get_logger, logging_enabled, get_time
-from . import conf, utils, embedding
-from .logger import get_logger, logging_enabled, get_time
+# import htree.conf, htree.utils, htree.embedding
+# from . import conf, utils, embedding
+# from .logger import get_logger, logging_enabled, get_time
+
+
+from htree.logger import get_logger, logging_enabled, get_time
+import htree.conf as conf
+import htree.utils as utils
+import htree.embedding as embedding
 
 # Use non-GUI backend for matplotlib
 import matplotlib
@@ -1142,7 +1149,8 @@ class MultiTree:
 
         for index, tree in enumerate(self.trees):
             self._log_info(f"Processing tree {index + 1}/{len(self.trees)}: {tree.name}")
-            points = tree._naive_hyperbolic_embedding(tree.distance_matrix()[0]*scale_factor, dim)
+
+            points = tree._naive_hyperbolic_embedding(tree.distance_matrix()[0]*scale_factor, dim =  dim)
             multi_embeddings.append(embedding.LoidEmbedding(points=points, labels=tree.terminal_names(), curvature=-(scale_factor ** 2)))
             self._log_info(f"Naive Hyperbolic embedding completed for {tree.name}.")
             progress.update(1)

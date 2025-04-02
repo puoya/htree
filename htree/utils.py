@@ -1,19 +1,20 @@
 import os
+import math
 import torch
 import numpy as np
-import torch.optim as optim
 from torch import Tensor
-from typing import Optional, Any, Tuple, List
+import scipy.linalg as la
+import torch.optim as optim
 import scipy.sparse.linalg as spla
-from scipy.sparse.linalg import eigs
-from scipy.optimize import minimize
+from typing import Optional, Any, Tuple, List
 
-import math
-from . import conf
-from . import embedding
+import htree.conf as conf
+import htree.embedding as embedding
+
+# from . import conf
+# from . import embedding
 # import conf
 # import embedding
-
 ##########################################################################
 def lgram_to_pts(gram: torch.Tensor, dim: int) -> torch.Tensor:
     """Convert Lorentzian Gram matrix to point coordinates using partial eigen decomposition."""
@@ -21,12 +22,26 @@ def lgram_to_pts(gram: torch.Tensor, dim: int) -> torch.Tensor:
         raise ValueError("Target dimension must be at least 1.")
     
     gram_np = gram.cpu().numpy().astype(np.float64)
-    min_eval, min_evec = map(lambda x: torch.tensor(x, dtype=torch.float64), spla.eigsh(gram_np, k=1, which='SA'))
-    evals, evecs = map(lambda x: torch.tensor(x, dtype=torch.float64), spla.eigsh(gram_np, k=min(dim, gram.shape[0] - 1) + 1, which='LM'))
+    
+    min_eval, min_evec = map(lambda x: torch.tensor(x, dtype=torch.float64),
+                             spla.eigsh(gram_np, k=1, which='SA'))
+    
+    k_val = min(dim, gram.shape[0] - 1) + 1
+    if k_val < gram.shape[0]:
+        evals, evecs = spla.eigsh(gram_np, k=k_val, which='LM')
+    else:
+        evals, evecs = la.eigh(gram_np)
+    
+    evals, evecs = map(lambda x: torch.tensor(x, dtype=torch.float64), (evals, evecs))
     idx = torch.argsort(evals, descending=True)
     evals, evecs = evals[idx][:-1].clamp(min=0), evecs[:, idx[:-1]]
     
-    coords = torch.diag(torch.sqrt(torch.cat((min_eval[0].abs().unsqueeze(0), evals)))).to(torch.float64) @ torch.cat((min_evec, evecs), dim=1).T
+    coords = torch.diag(torch.sqrt(torch.cat((min_eval[0].abs().unsqueeze(0), evals)))).to(torch.float64) @ \
+             torch.cat((min_evec, evecs), dim=1).T
+    if coords.shape[0] < dim+1:
+        pad = torch.zeros((dim+1 - coords.shape[0], coords.shape[1]), dtype=coords.dtype, device=coords.device)
+        coords = torch.cat((coords, pad), dim=0)
+    
     return coords if coords[0, 0] >= 0 else -coords
 ###########################################################################
 def hyperbolic_proj(vec: torch.Tensor, tol: float = 1e-100, max_iter: int = 100) -> torch.Tensor:
