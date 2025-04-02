@@ -1,7 +1,6 @@
 import os
 import copy
 import pickle
-import logging
 import random
 from datetime import datetime
 from collections.abc import Collection
@@ -9,28 +8,19 @@ from typing import Union, Set, Optional, List, Callable, Tuple, Dict, Iterator
 
 import torch
 import numpy as np
+from tqdm import tqdm
 import treeswift as ts
-import matplotlib.pyplot as plt
+from torch.optim import Adam
 from matplotlib import patches
+import matplotlib.pyplot as plt
+import scipy.sparse.linalg as spla
 from matplotlib.gridspec import GridSpec
 import matplotlib.animation as animation
-import scipy.sparse.linalg as spla
-from torch.optim import Adam
-from tqdm import tqdm
 
-# import conf
-# import utils
-# import embedding
-# from logger import get_logger, logging_enabled, get_time
-# import htree.conf, htree.utils, htree.embedding
-# from . import conf, utils, embedding
-# from .logger import get_logger, logging_enabled, get_time
-
-
-from htree.logger import get_logger, logging_enabled, get_time
 import htree.conf as conf
 import htree.utils as utils
 import htree.embedding as embedding
+from htree.logger import get_logger, logging_enabled, get_time
 
 # Use non-GUI backend for matplotlib
 import matplotlib

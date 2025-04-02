@@ -11,10 +11,6 @@ from typing import Optional, Any, Tuple, List
 import htree.conf as conf
 import htree.embedding as embedding
 
-# from . import conf
-# from . import embedding
-# import conf
-# import embedding
 ##########################################################################
 def lgram_to_pts(gram: torch.Tensor, dim: int) -> torch.Tensor:
     """Convert Lorentzian Gram matrix to point coordinates using partial eigen decomposition."""

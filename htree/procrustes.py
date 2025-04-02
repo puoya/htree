@@ -1,17 +1,16 @@
-import numpy as np
+import copy
 import torch
 import pickle
-import logging
-import os
-import copy
-from typing import Optional, Union, List
-from datetime import datetime
-from torch.optim import Adam
+import numpy as np
 
-from . import conf
-from .logger import get_logger, logging_enabled, get_time
-# import conf
-# from logger import get_logger, logging_enabled, get_time
+from torch.optim import Adam
+from datetime import datetime
+from typing import Optional, Union, List
+
+
+import htree.conf as conf
+from htree.logger import get_logger, logging_enabled, get_time
+
 
 class HyperbolicProcrustes:
     """

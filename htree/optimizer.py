@@ -1,6 +1,6 @@
 import torch
-from .utils import hyperbolic_exp  # Exponential map from tangent space to hyperbolic space
-from .embedding import LoidEmbedding
+from htree.utils import hyperbolic_exp
+from htree.embedding import LoidEmbedding
 
 class HyperbolicOptimizer:
     """
