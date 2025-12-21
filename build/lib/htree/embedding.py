@@ -1,27 +1,19 @@
-import numpy as np
+import os
+import copy
 import torch
 import pickle
 import logging
-import os
-import copy
+import numpy as np
+
 from typing import Optional, Union, List,Callable
-from datetime import datetime
 import scipy.sparse.linalg as spla
+from datetime import datetime
 
-# from . import conf, utils, embedding, procrustes
-# from .logger import get_logger, logging_enabled, get_time
-# import conf
-# import utils
-# import procrustes
-# from logger import get_logger, logging_enabled, get_time
-
-from htree.logger import get_logger, logging_enabled, get_time
 import htree.conf as conf
 import htree.utils as utils
 import htree.embedding as embedding
 import htree.procrustes as procrustes
-
-
+from htree.logger import get_logger, logging_enabled, get_time
 ################################################################################################
 class Embedding:
     """
@@ -1033,7 +1025,8 @@ class MultiEmbedding:
             self.curvature = embedding.curvature
             self.dimension = embedding.dimension
         elif embedding.curvature != self.curvature or embedding.dimension != self.dimension:
-            print(embedding.dimension, embedding._points.shape, self.dimension)
+            # print(embedding.dimension, embedding._points.shape, self.dimension)
+            # print(embedding.curvature, self.curvature,  embedding.dimension, self.dimension)
             print("Embedding not added due to curvature or dimension mismatch.")
             self._log_info("Embedding not added due to curvature or dimension mismatch.")
             return  # Do not append if they do not match
@@ -1311,3 +1304,4 @@ class MultiEmbedding:
         )
         self._log_info("Precise hyperbolic embedding completed.")
         return pts, scale
+

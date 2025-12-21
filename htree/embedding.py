@@ -1025,7 +1025,8 @@ class MultiEmbedding:
             self.curvature = embedding.curvature
             self.dimension = embedding.dimension
         elif embedding.curvature != self.curvature or embedding.dimension != self.dimension:
-            print(embedding.dimension, embedding._points.shape, self.dimension)
+            # print(embedding.dimension, embedding._points.shape, self.dimension)
+            # print(embedding.curvature, self.curvature,  embedding.dimension, self.dimension)
             print("Embedding not added due to curvature or dimension mismatch.")
             self._log_info("Embedding not added due to curvature or dimension mismatch.")
             return  # Do not append if they do not match
@@ -1303,3 +1304,4 @@ class MultiEmbedding:
         )
         self._log_info("Precise hyperbolic embedding completed.")
         return pts, scale
+

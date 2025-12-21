@@ -8,7 +8,7 @@ OUTPUT_VIDEO_DIRECTORY = "tmp/Videos"
 OUTPUT_SUBSPACE_DIRECTORY = "tmp/Subapce"
 ############################### TREE ###############################
 ENABLE_ACCURATE_OPTIMIZATION = False
-TOTAL_EPOCHS  = 1000
+TOTAL_EPOCHS  = 200
 INITIAL_LEARNING_RATE = 0.01
 MAX_RANGE = 10
 ENABLE_SAVE_MODE = False

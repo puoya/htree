@@ -1,9 +1,10 @@
 # htree/logger.py
-import logging
+
 import os
+import logging
+import htree.conf as conf
 from datetime import datetime
-from . import conf
-# import conf
+
 
 # Global logging state
 _LOGGING_ENABLED = False
