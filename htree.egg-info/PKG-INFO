@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: htree
-Version: 4.0.0
+Version: 4.1.0
 Summary: A library for tree reading, embedding, and analysis of phylogenetic trees
 Author: Puoya Tabaghi
 Author-email: puoya.tabaghi@gmail.com

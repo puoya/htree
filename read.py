@@ -3,11 +3,11 @@ import torch
 from htree.tree_collections import Tree
 from htree.tree_collections import MultiTree
 # Initialize from file
-tree = Tree("path/to/treefile1.tre")
-print(tree)
-# Initialize from a treeswift Tree object
-import treeswift as ts
-t = ts.read_tree_newick("path/to/treefile.tre")
+tree = Tree("path/to/treefile.tre")
+# print(tree)
+# # Initialize from a treeswift Tree object
+# import treeswift as ts
+# t = ts.read_tree_newick("path/to/treefile.tre")
 print(tree)
 
 
@@ -21,7 +21,7 @@ print(tree)
 # dmT, names = tree.distance_matrix()
 # print(dmT[:4,:4])
 # print(names[:4])
-# # Get tree diameter
+# Get tree diameter
 # diameter = tree.diameter()
 # print(diameter)
 
@@ -31,7 +31,18 @@ print(tree)
 # print(diameter)
 
 
-# embedding = tree.embed(dim=2, geometry='hyperbolic')
+embedding = tree.embed(dim=2, geometry='euclidean')
+print(embedding)
+print(embedding.points)
+x = embedding.embed(dim=4, geometry='hyperbolic', curvature = -10, precise_opt = True)
+print(x)
+print(x.points)
+
+# from htree.PCA import PCA
+
+# pca = PCA(embedding)
+# emb2 = pca.map_to(dim=2)
+# print(emb2)
 # # print(embedding.points)
 # embedding = tree.embed(dim=2, geometry='hyperbolic', curvature = -100)
 # # print(embedding.points)
@@ -65,8 +76,12 @@ print(tree)
 
 # tree.embed(dim=2, precise_opt=True, export_video=True)
 
-embedding = tree.embed(dim=5, geometry='hyperbolic', precise_opt=True, export_video=True)
-print(embedding)
+# mtree = MultiTree("path/to/trees.tre")
+# tree = mtree[190]
+# # # print(mtree)
+
+# embedding = tree.embed(dim=12, geometry='euclidean', precise_opt=True, export_video=True)
+# print(embedding)
 # dmH,_ = embedding.distance_matrix()
 
 # print( np.linalg.norm(dmT- dmH**2)/np.linalg.norm(dmT))
@@ -120,22 +135,31 @@ print(embedding)
 
 
 # mtree = MultiTree("path/to/trees.tre")
-# print(mtree)
+# # print(mtree)
 
 # # print(mtree.terminal_names())
 
-# avg_mat, conf, labels = mtree.distance_matrix(func=torch.nanmedian)
+# avg_mat, conf, labels = mtree.distance_matrix(method='fp')
+# # # func=torch.nanmedian
 
 # print(avg_mat)
+
+
 
 # mtree_normal = mtree.normalize()
-# print(mtree_normal)
-# avg_mat, conf, labels = mtree.distance_matrix(func=torch.nanmedian)
-
-# print(avg_mat)
-
-# multiemb_hyperbolic = mtree.embed(dim=10, geometry='euclidean', precise_opt=True, export_video=True)
-# print(multiemb_hyperbolic)
+# mtree = mtree[:10]
+# # # print(mtree_normal)
+# # avg_mat, conf, labels = mtree.distance_matrix(method='fp')
+# # print(avg_mat)
+# # avg_mat, conf, labels = mtree.distance_matrix()
+# # print(avg_mat)
+# # mtree = mtree[20:60]
+# multiemb_hyperbolic = mtree.embed(dim=10, geometry='hyperbolic', precise_opt=True)
+# print(multiemb_hyperbolic[0])
+# dist= multiemb_hyperbolic.distance_matrix()
+# print(dist[0])
+# x = multiemb_hyperbolic.reference_embedding(precise_opt=True)
+# print(x)
 # print(multiemb_hyperbolic[0])
 
 

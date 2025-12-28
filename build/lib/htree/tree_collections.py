@@ -39,12 +39,9 @@ import htree.conf as conf
 import htree.utils as utils
 import htree.embedding as embedding
 from htree.logger import get_logger, logging_enabled, get_time
-
-
 # =============================================================================
 # Tree: Single Phylogenetic Tree
 # =============================================================================
-
 class Tree:
     """
     Phylogenetic tree with embedding and distance computation capabilities.
@@ -189,7 +186,7 @@ class Tree:
     def distance_matrix(self) -> Tuple[torch.Tensor, List[str]]:
         """
         Compute pairwise patristic distances between all leaves.
-
+        
         Returns
         -------
         dist_matrix : torch.Tensor
@@ -199,22 +196,31 @@ class Tree:
         """
         labels = self.terminal_names()
         n = len(labels)
-
-        # Build distance lookup from treeswift
+        if n == 0:
+            return torch.empty((0, 0), dtype=torch.float32), labels
         dist_dict = self.contents.distance_matrix(leaf_labels=True)
-        label_dists = [dist_dict.get(lbl, {}) for lbl in labels]
-
-        # Vectorized construction
-        row_idx = np.repeat(np.arange(n), n)
-        col_idx = np.tile(np.arange(n), n)
-        distances = np.array([
-            label_dists[i].get(labels[j], 0.0)
-            for i, j in zip(row_idx, col_idx)
-        ])
-
-        dist_matrix = torch.tensor(distances, dtype=torch.float32).reshape(n, n)
+        # O(1) index lookup via hash map
+        label_to_idx: dict = {lbl: idx for idx, lbl in enumerate(labels)}
+        # Pre-allocate contiguous memory block
+        matrix = np.zeros((n, n), dtype=np.float32)
+        def fill_row(i: int) -> None:
+            """Fill row i via dict iteration (avoids n random lookups per row)."""
+            row_dict = dist_dict.get(labels[i])
+            if row_dict is not None:
+                row = matrix[i]  # Direct view, no copy
+                for lbl_j, dist in row_dict.items():
+                    j = label_to_idx.get(lbl_j)
+                    if j is not None:
+                        row[j] = dist
+        # Thread backend: shared memory, zero serialization overhead
+        Parallel(n_jobs=-1, prefer="threads")(
+            delayed(fill_row)(i) for i in range(n)
+        )
+        # Zero-copy tensor creation
+        dist_matrix = torch.from_numpy(matrix)
         self._log(f"Distance matrix computed for '{self.name}': {n} terminals")
         return dist_matrix, labels
+
 
     def diameter(self) -> torch.Tensor:
         """
@@ -284,110 +290,66 @@ class Tree:
         """
         if dim is None:
             raise ValueError("Parameter 'dim' is required.")
-
         # Parameter defaults
-        params = {
-            'precise_opt': kwargs.get('precise_opt', conf.ENABLE_ACCURATE_OPTIMIZATION),
-            'epochs': kwargs.get('epochs', conf.TOTAL_EPOCHS),
-            'lr_init': kwargs.get('lr_init', conf.INITIAL_LEARNING_RATE),
-            'dist_cutoff': kwargs.get('dist_cutoff', conf.MAX_RANGE),
-            'export_video': kwargs.get('export_video', conf.ENABLE_VIDEO_EXPORT),
-            'save_mode': kwargs.get('save_mode', conf.ENABLE_SAVE_MODE),
-            'scale_fn': kwargs.get('scale_fn'),
-            'lr_fn': kwargs.get('lr_fn'),
-            'weight_exp_fn': kwargs.get('weight_exp_fn'),
-            'curvature': kwargs.get('curvature'),
+        defaults = {
+            'precise_opt': conf.ENABLE_ACCURATE_OPTIMIZATION, 'epochs': conf.TOTAL_EPOCHS,
+            'lr_init': conf.INITIAL_LEARNING_RATE, 'dist_cutoff': conf.MAX_RANGE,
+            'export_video': conf.ENABLE_VIDEO_EXPORT, 'save_mode': conf.ENABLE_SAVE_MODE,
+            'scale_fn': None, 'lr_fn': None, 'weight_exp_fn': None, 'curvature': None,
         }
+        params = {k: kwargs.get(k, v) for k, v in defaults.items()}
         params['save_mode'] |= params['export_video']
         params['export_video'] &= params['precise_opt']
-
-
+        is_hyperbolic = geometry == 'hyperbolic'
         try:
-            dist_matrix = self.distance_matrix()[0]
-            curvature = None
-
+            dist_matrix, curvature = self.distance_matrix()[0], None
             # Hyperbolic: scale distances and compute curvature
-            if geometry == 'hyperbolic':
+            if is_hyperbolic:
+                if params['curvature'] is not None and params['curvature'] >= 0:
+                    self._log("Wrong input curvature. It has to be negative.")
+                    print("Wrong input curvature. It has to be negative.")
+                    return None
                 if params['curvature'] is not None:
-                    if params['curvature'] >= 0:
-                        self._log(f"Wrong input curvature. It has to be negative.")
-                        print(f"Wrong input curvature. It has to be negative.")
-                        return None
-                    curvature = params['curvature']
-                    params['scale_fn'] = lambda x1, x2, x3: False
-                    scale = np.sqrt(np.abs(curvature))
+                    curvature, params['scale_fn'] = params['curvature'], lambda x1, x2, x3: False
+                    scale = np.sqrt(-curvature)
                 else:
                     scale = params['dist_cutoff'] / self.diameter()
                     curvature = -(scale ** 2)
                 dist_matrix = dist_matrix * scale
-                
             # Naive embedding initialization
             self._log(f"Computing naive {geometry} embedding...")
             points = utils.naive_embedding(dist_matrix, dim, geometry=geometry)
             self._log(f"Naive {geometry} embedding complete.")
-
             # Precise optimization refinement
             if params['precise_opt']:
                 self._log(f"Refining with precise {geometry} optimization...")
                 opt_result = utils.precise_embedding(
-                    dist_matrix, dim,
-                    geometry=geometry,
-                    init_pts=points,
-                    log_fn=self._log,
-                    time_stamp=self._timestamp,
-                    **params
-                )
-                if geometry == 'hyperbolic':
-                    points, opt_scale = opt_result
-                    curvature *= opt_scale ** 2
-                else:
-                    points = opt_result
+                    dist_matrix, dim, geometry=geometry, init_pts=points,
+                    log_fn=self._log, time_stamp=self._timestamp, **params)
+                points, opt_scale = (opt_result, 1) if not is_hyperbolic else opt_result
+                curvature = curvature * opt_scale ** 2 if is_hyperbolic else None
                 self._log(f"Precise {geometry} embedding complete.")
-
             # Construct embedding object
             labels = self.terminal_names()
-            if geometry == 'hyperbolic':
-                result = embedding.LoidEmbedding(
-                    points=points, labels=labels, curvature=curvature
-                )
-            else:
-                result = embedding.EuclideanEmbedding(
-                    points=points, labels=labels
-                )
-
+            result = (embedding.LoidEmbedding(points=points, labels=labels, curvature=curvature)
+                      if is_hyperbolic else embedding.EuclideanEmbedding(points=points, labels=labels))
         except Exception as e:
             self._log(f"Embedding error: {e}")
             raise
-
-        # Save result
-        self._save_embedding(result, geometry, dim)
-
-        if params['export_video']:
-            self._generate_video(fps=params['epochs'] // conf.VIDEO_LENGTH)
-
-        return result
-
-    def _save_embedding(
-        self,
-        emb: 'embedding.LoidEmbedding | embedding.EuclideanEmbedding',
-        geometry: str,
-        dim: int
-    ) -> None:
-        """Save embedding object to timestamped directory."""
-        out_dir = os.path.join(
-            conf.OUTPUT_DIRECTORY,
-            self._timestamp.strftime('%Y-%m-%d_%H-%M-%S')
-        )
+        # Save embedding to timestamped directory
+        out_dir = os.path.join(conf.OUTPUT_DIRECTORY, self._timestamp.strftime('%Y-%m-%d_%H-%M-%S'))
         os.makedirs(out_dir, exist_ok=True)
-
         filepath = os.path.join(out_dir, f"{geometry}_embedding_{dim}d.pkl")
         try:
             with open(filepath, 'wb') as f:
-                pickle.dump(emb, f, protocol=pickle.HIGHEST_PROTOCOL)
+                pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)
             self._log(f"Embedding saved to {filepath}")
         except (IOError, pickle.PicklingError) as e:
             self._log(f"Save error: {e}")
             raise
+        if params['export_video']:
+            self._generate_video(fps=params['epochs'] // conf.VIDEO_LENGTH)
+        return result
 
     def _generate_video(self, fps: int = 10) -> None:
         """
@@ -403,49 +365,25 @@ class Tree:
         """
         # Theme configuration
         THEME = {
-            'background': '#1a1a2e',
-            'panel': '#1e2a4a',
-            'grid': '#2a2a4a',
-            'text': '#e8e8e8',
-            'text_dim': '#a0a0b0',
-            'accent': '#00d4ff',
-            'accent_alt': '#ff6b6b',
-            'highlight': '#ffd93d',
+            'background': '#1a1a2e', 'panel': '#1e2a4a', 'grid': '#2a2a4a',
+            'text': '#e8e8e8', 'text_dim': '#a0a0b0', 'accent': '#00d4ff',
+            'accent_alt': '#ff6b6b', 'highlight': '#ffd93d',
         }
 
         plt.rcParams.update({
-            'figure.facecolor': THEME['background'],
-            'figure.edgecolor': THEME['background'],
-            'axes.facecolor': THEME['panel'],
-            'axes.edgecolor': THEME['grid'],
-            'axes.labelcolor': THEME['text'],
-            'axes.titlecolor': THEME['text'],
-            'axes.grid': True,
-            'axes.axisbelow': True,
-            'axes.linewidth': 0.8,
-            'axes.titleweight': 'bold',
-            'axes.titlesize': 11,
-            'axes.labelsize': 9,
-            'grid.color': THEME['grid'],
-            'grid.linewidth': 0.4,
-            'grid.alpha': 0.5,
-            'xtick.color': THEME['text_dim'],
-            'ytick.color': THEME['text_dim'],
-            'xtick.labelsize': 8,
-            'ytick.labelsize': 8,
-            'text.color': THEME['text'],
-            'font.family': 'sans-serif',
-            'font.size': 9,
-            'legend.facecolor': THEME['panel'],
-            'legend.edgecolor': THEME['grid'],
-            'legend.fontsize': 8,
+            'figure.facecolor': THEME['background'], 'figure.edgecolor': THEME['background'],
+            'axes.facecolor': THEME['panel'], 'axes.edgecolor': THEME['grid'],
+            'axes.labelcolor': THEME['text'], 'axes.titlecolor': THEME['text'],
+            'axes.grid': True, 'axes.axisbelow': True, 'axes.linewidth': 0.8,
+            'axes.titleweight': 'bold', 'axes.titlesize': 11, 'axes.labelsize': 9,
+            'grid.color': THEME['grid'], 'grid.linewidth': 0.4, 'grid.alpha': 0.5,
+            'xtick.color': THEME['text_dim'], 'ytick.color': THEME['text_dim'],
+            'xtick.labelsize': 8, 'ytick.labelsize': 8, 'text.color': THEME['text'],
+            'font.family': 'sans-serif', 'font.size': 9, 'legend.facecolor': THEME['panel'],
+            'legend.edgecolor': THEME['grid'], 'legend.fontsize': 8,
         })
 
-        base_dir = os.path.join(
-            conf.OUTPUT_DIRECTORY,
-            self._timestamp.strftime('%Y-%m-%d_%H-%M-%S')
-        )
-
+        base_dir = os.path.join(conf.OUTPUT_DIRECTORY, self._timestamp.strftime('%Y-%m-%d_%H-%M-%S'))
         # Load optimization data
         weights = -np.load(os.path.join(base_dir, "weight_exponents.npy"))
         lrs = np.log10(np.load(os.path.join(base_dir, "learning_rates.npy")) + conf.EPSILON)
@@ -461,26 +399,18 @@ class Tree:
         )[:len(weights)]
 
         n_frames = len(re_files)
-
         # Parallel load RE matrices
-        re_matrices = Parallel(n_jobs=-1, prefer="threads")(
-            delayed(np.load)(os.path.join(base_dir, f)) for f in re_files
-        )
-        re_stack = np.stack(re_matrices, axis=0)
-        del re_matrices
+        re_stack = np.stack(Parallel(n_jobs=-1, prefer="threads")(
+            delayed(np.load)(os.path.join(base_dir, f)) for f in re_files), axis=0)
 
         # Compute statistics
         triu_idx = np.triu_indices(re_stack.shape[1], k=1)
         triu_vals = re_stack[:, triu_idx[0], triu_idx[1]]
-
-        log_re_min = np.log10(np.nanmin(triu_vals) + conf.EPSILON)
-        log_re_max = np.log10(np.nanmax(triu_vals) + conf.EPSILON)
+        log_re_min, log_re_max = np.log10(np.nanmin(triu_vals) + conf.EPSILON), np.log10(np.nanmax(triu_vals) + conf.EPSILON)
         rms_vals = np.sqrt(np.nanmean(triu_vals ** 2, axis=1))
         del triu_vals
 
-        rms_bounds = (rms_vals.min() * 0.9, rms_vals.max() * 1.1)
-        lr_bounds = (lrs.min() - 0.1, lrs.max() + 0.1)
-
+        rms_bounds, lr_bounds = (rms_vals.min() * 0.9, rms_vals.max() * 1.1), (lrs.min() - 0.1, lrs.max() + 0.1)
         # Prepare distance matrix display
         log_dist = np.log10(self.distance_matrix()[0].numpy() + conf.EPSILON)
         diag_mask = np.eye(log_dist.shape[0], dtype=bool)
@@ -493,33 +423,22 @@ class Tree:
 
         epochs = np.arange(1, n_frames + 1)
         is_hyperbolic = scales is not None and not np.all(scales == 1)
-
         # Precompute scale-learning masks
         if is_hyperbolic:
             scale_active = scales.astype(bool)
             scale_changed = np.concatenate([[True], np.diff(scales) != 0])
-            mask_changing = scale_active & scale_changed
-            mask_unchanged = scale_active & ~scale_changed
+            mask_changing, mask_unchanged = scale_active & scale_changed, scale_active & ~scale_changed
 
         # Setup output
-        out_dir = os.path.join(
-            conf.OUTPUT_VIDEO_DIRECTORY,
-            self._timestamp.strftime('%Y-%m-%d_%H-%M-%S')
-        )
+        out_dir = os.path.join(conf.OUTPUT_VIDEO_DIRECTORY, self._timestamp.strftime('%Y-%m-%d_%H-%M-%S'))
         os.makedirs(out_dir, exist_ok=True)
         video_path = os.path.join(out_dir, 're_evolution.mp4')
-
         self._log("Generating optimization video...")
-
         # Create figure
         fig = plt.figure(figsize=(14, 12), dpi=100)
         gs = GridSpec(4, 2, height_ratios=[1, 1, 2, 2], hspace=0.35, wspace=0.25)
-
-        ax_rms = fig.add_subplot(gs[0, :])
-        ax_weight = fig.add_subplot(gs[1, 0])
-        ax_lr = fig.add_subplot(gs[1, 1])
-        ax_re = fig.add_subplot(gs[2:, 0])
-        ax_dist = fig.add_subplot(gs[2:, 1])
+        ax_rms, ax_weight, ax_lr = fig.add_subplot(gs[0, :]), fig.add_subplot(gs[1, 0]), fig.add_subplot(gs[1, 1])
+        ax_re, ax_dist = fig.add_subplot(gs[2:, 0]), fig.add_subplot(gs[2:, 1])
 
         # Style axes borders
         for ax in [ax_rms, ax_weight, ax_lr, ax_re, ax_dist]:
@@ -527,81 +446,38 @@ class Tree:
                 spine.set_edgecolor('#4a4a6a')
                 spine.set_linewidth(1.5)
 
+        marker_kw = dict(marker='o', markersize=5, markeredgecolor='white', markeredgewidth=0.1)
         # RMS plot
-        line_rms, = ax_rms.plot(
-            [], [], color=THEME['accent'], linewidth=2,
-            marker='o', markersize=5, markerfacecolor=THEME['accent'],
-            markeredgecolor='white', markeredgewidth=0.1
-        )
-        ax_rms.set_xlim(1, n_frames)
-        ax_rms.set_ylim(*rms_bounds)
-        ax_rms.set_yscale('log')
-        ax_rms.set_xlabel('Epoch')
-        ax_rms.set_ylabel('RMS Relative Error')
-        ax_rms.set_title('Relative Error Evolution')
+        line_rms, = ax_rms.plot([], [], color=THEME['accent'], linewidth=2, markerfacecolor=THEME['accent'], **marker_kw)
+        ax_rms.set(xlim=(1, n_frames), ylim=rms_bounds, yscale='log', xlabel='Epoch',
+                   ylabel='RMS Relative Error', title='Relative Error Evolution')
 
         # Weight plot
-        line_weight, = ax_weight.plot(
-            [], [], color=THEME['accent'], linewidth=2,
-            marker='o', markersize=5, markerfacecolor=THEME['highlight'],
-            markeredgecolor='white', markeredgewidth=0.1
-        )
+        line_weight, = ax_weight.plot([], [], color=THEME['accent'], linewidth=2, markerfacecolor=THEME['highlight'], **marker_kw)
         line_scale_on = line_scale_off = None
         if is_hyperbolic:
-            line_scale_on, = ax_weight.plot(
-                [], [], 'o', markersize=7, markerfacecolor='#ff3333',
-                markeredgecolor='white', markeredgewidth=0.01, 
-                label='Scale Learning On'
-            )
-            line_scale_off, = ax_weight.plot(
-                [], [], 'o', markersize=5, markerfacecolor=THEME['accent'],
-                markeredgecolor='white', markeredgewidth=0.01,
-                label='Scale Learning Off'
-            )
+            line_scale_on, = ax_weight.plot([], [], 'o', markersize=7, markerfacecolor='#ff3333',
+                                            markeredgecolor='white', markeredgewidth=0.01, label='Scale Learning On')
+            line_scale_off, = ax_weight.plot([], [], 'o', markersize=5, markerfacecolor=THEME['accent'],
+                                             markeredgecolor='white', markeredgewidth=0.01, label='Scale Learning Off')
             ax_weight.legend(loc='upper right')
-        ax_weight.set_xlim(1, n_frames)
-        ax_weight.set_ylim(0, 1)
-        ax_weight.set_xlabel('Epoch')
-        ax_weight.set_ylabel('−Weight Exponent')
-        ax_weight.set_title('Weight Evolution')
-
+        ax_weight.set(xlim=(1, n_frames), ylim=(0, 1), xlabel='Epoch', ylabel='−Weight Exponent', title='Weight Evolution')
         # Learning rate plot
-        line_lr, = ax_lr.plot(
-            [], [], color='#50fa7b', linewidth=2,
-            marker='o', markersize=5, markerfacecolor=THEME['accent'],
-            markeredgecolor='white', markeredgewidth=0.1
-        )
-        ax_lr.set_xlim(1, n_frames)
-        ax_lr.set_ylim(*lr_bounds)
-        ax_lr.set_xlabel('Epoch')
-        ax_lr.set_ylabel('log₁₀(Learning Rate)')
-        ax_lr.set_title('Learning Rate Schedule')
+        line_lr, = ax_lr.plot([], [], color='#50fa7b', linewidth=2, markerfacecolor=THEME['accent'], **marker_kw)
+        ax_lr.set(xlim=(1, n_frames), ylim=lr_bounds, xlabel='Epoch', ylabel='log₁₀(Learning Rate)', title='Learning Rate Schedule')
 
+        cbar_kw = dict(fraction=0.046, pad=0.04, shrink=0.9)
         # RE heatmap
         ax_re.set_facecolor('#0d0d1a')
-        im_re = ax_re.imshow(
-            log_re_stack[0], cmap='magma',
-            vmin=log_re_min, vmax=log_re_max,
-            interpolation='nearest', aspect='equal'
-        )
+        im_re = ax_re.imshow(log_re_stack[0], cmap='magma', vmin=log_re_min, vmax=log_re_max, interpolation='nearest', aspect='equal')
         title_re = ax_re.set_title('Relative Error Matrix · Epoch 0')
-        ax_re.set_xticks([])
-        ax_re.set_yticks([])
-        cbar_re = fig.colorbar(im_re, ax=ax_re, fraction=0.046, pad=0.04, shrink=0.9)
-        cbar_re.set_label('log₁₀(RE)')
-
+        ax_re.set(xticks=[], yticks=[])
+        fig.colorbar(im_re, ax=ax_re, **cbar_kw).set_label('log₁₀(RE)')
         # Distance heatmap
         ax_dist.set_facecolor('#0d0d1a')
         ax_dist.imshow(masked_dist, cmap='viridis', interpolation='nearest', aspect='equal')
-        ax_dist.set_title('Distance Matrix')
-        ax_dist.set_xticks([])
-        ax_dist.set_yticks([])
-        cbar_dist = fig.colorbar(
-            ax_dist.images[0], ax=ax_dist,
-            fraction=0.046, pad=0.04, shrink=0.9
-        )
-        cbar_dist.set_label('log₁₀(Distance)')
-
+        ax_dist.set(title='Distance Matrix', xticks=[], yticks=[])
+        fig.colorbar(ax_dist.images[0], ax=ax_dist, **cbar_kw).set_label('log₁₀(Distance)')
         # Heatmap borders
         for ax in (ax_re, ax_dist):
             for spine in ax.spines.values():
@@ -609,63 +485,42 @@ class Tree:
                 spine.set_linewidth(1.5)
                 spine.set_alpha(0.4)
 
-        fig.text(
-            0.99, 0.01, 'RE Matrix Evolution',
-            fontsize=8, color=THEME['text_dim'], alpha=0.5,
-            ha='right', va='bottom', style='italic'
-        )
+        fig.text(0.99, 0.01, 'RE Matrix Evolution', fontsize=8, color=THEME['text_dim'],
+                 alpha=0.5, ha='right', va='bottom', style='italic')
         fig.subplots_adjust(left=0.06, right=0.94, top=0.95, bottom=0.06)
-
         fig.canvas.draw()
         width, height = fig.canvas.get_width_height()
-
         # FFmpeg pipe
-        ffmpeg_cmd = [
-            'ffmpeg', '-y',
-            '-f', 'rawvideo', '-vcodec', 'rawvideo',
-            '-s', f'{width}x{height}', '-pix_fmt', 'rgba',
-            '-r', str(fps), '-i', '-',
-            '-c:v', 'libx264', '-preset', 'ultrafast',
-            '-crf', '23', '-pix_fmt', 'yuv420p',
-            '-movflags', '+faststart', video_path
-        ]
-
-        proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen([
+            'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
+            '-s', f'{width}x{height}', '-pix_fmt', 'rgba', '-r', str(fps), '-i', '-',
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23',
+            '-pix_fmt', 'yuv420p', '-movflags', '+faststart', video_path
+        ], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
         try:
             for epoch in range(n_frames):
                 x = epochs[:epoch + 1]
-
                 line_rms.set_data(x, rms_vals[:epoch + 1])
                 line_weight.set_data(x, weights[:epoch + 1])
                 line_lr.set_data(x, lrs[:epoch + 1])
-
                 if is_hyperbolic:
-                    m_on = mask_changing[:epoch + 1]
-                    m_off = mask_unchanged[:epoch + 1]
+                    m_on, m_off = mask_changing[:epoch + 1], mask_unchanged[:epoch + 1]
                     line_scale_on.set_data(x[m_on], weights[:epoch + 1][m_on])
                     line_scale_off.set_data(x[m_off], weights[:epoch + 1][m_off])
-
                 im_re.set_array(log_re_stack[epoch])
                 title_re.set_text(f'Relative Error Matrix · Epoch {epoch}')
-
                 fig.canvas.draw()
                 proc.stdin.write(memoryview(fig.canvas.buffer_rgba()))
-
         finally:
             proc.stdin.close()
             proc.wait()
-
         plt.close(fig)
         plt.rcdefaults()
-
         self._log(f"Video saved: {video_path}")
-
-
 # =============================================================================
 # MultiTree: Collection of Phylogenetic Trees
 # =============================================================================
-
 class MultiTree:
     """
     Collection of phylogenetic trees with batch operations.
@@ -707,16 +562,13 @@ class MultiTree:
         """
         self._timestamp = get_time() or datetime.now()
         self.trees: List[Tree] = []
-
         if len(source) == 1 and isinstance(source[0], str):
             filepath = source[0]
             self.name = os.path.basename(filepath)
             self.trees = self._load_trees(filepath)
-
         elif len(source) == 2 and isinstance(source[0], str) and isinstance(source[1], list):
             self.name = source[0]
             tree_list = source[1]
-
             if all(isinstance(t, Tree) for t in tree_list):
                 self.trees = tree_list
             elif all(isinstance(t, ts.Tree) for t in tree_list):
@@ -816,7 +668,6 @@ class MultiTree:
         if fmt.lower() != 'newick':
             self._log(f"Save failed: unsupported format '{fmt}'")
             raise ValueError(f"Unsupported format: {fmt}")
-
         try:
             with open(filepath, 'w') as f:
                 for tree in self.trees:
@@ -853,11 +704,9 @@ class MultiTree:
         """
         if not self.trees:
             return []
-
         common = set(self.trees[0].terminal_names())
         for tree in self.trees[1:]:
             common.intersection_update(tree.terminal_names())
-
         self._log(f"Found {len(common)} common terminals for '{self.name}'")
         return sorted(common)
 
@@ -872,283 +721,152 @@ class MultiTree:
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], List[str]]:
         """
         Compute aggregated distance matrix across all trees.
-
         Handles trees with different leaf sets by aligning to the global
         label set and treating missing pairs as NaN.
-
-        Parameters
-        ----------
-        method : {'agg', 'fp'}
-            'agg': Direct aggregation with func.
-            'fp': Fixed-point iteration with adaptive Gaussian weighting.
-        func : Callable
-            Aggregation function (e.g., torch.nanmean, torch.nanmedian).
-        max_iter : int
-            Maximum iterations for fixed-point method.
-        n_jobs : int
-            Parallel jobs (-1 for all cores).
-        tol : float
-            Convergence tolerance for fixed-point.
-        sigma_max : float
-            Maximum sigma for Gaussian similarity kernel.
-
-        Returns
-        -------
-        avg_matrix : torch.Tensor
-            Shape (n, n) aggregated distance matrix.
-        confidence : torch.Tensor
-            Shape (n, n) fraction of trees contributing to each entry.
-        labels : List[str]
-            Leaf names corresponding to matrix indices.
-
-        Raises
-        ------
-        ValueError
-            If no trees are available.
         """
         if not self.trees:
             self._log("No trees available for distance computation.")
             raise ValueError("No trees available.")
-
         labels = self.terminal_names()
-        label_idx = {lbl: i for i, lbl in enumerate(labels)}
-        n_labels = len(labels)
-        n_trees = len(self.trees)
-
+        n_labels, label_idx = len(labels), {lbl: i for i, lbl in enumerate(labels)}
         def align_tree_matrix(tree: Tree) -> torch.Tensor:
             """Align single tree's distance matrix to global label set."""
-            tree_labels = tree.terminal_names()
-            indices = torch.tensor(
-                [label_idx[lbl] for lbl in tree_labels],
-                dtype=torch.long
-            )
+            indices = torch.tensor([label_idx[lbl] for lbl in tree.terminal_names()], dtype=torch.long)
             aligned = torch.full((n_labels, n_labels), float('nan'))
             aligned[indices[:, None], indices] = tree.distance_matrix()[0]
             aligned.fill_diagonal_(0.0)
             return aligned
-
         def unwrap(result: torch.Tensor | tuple) -> torch.Tensor:
             """Extract tensor from aggregation result (handles nanmedian)."""
             return result[0] if isinstance(result, tuple) else result
-
         # Parallel matrix computation
-        aligned = Parallel(n_jobs=n_jobs, prefer="threads")(
-            delayed(align_tree_matrix)(tree) for tree in self.trees
-        )
-        dist_stack = torch.stack(aligned)  # (n_trees, n_labels, n_labels)
-
+        dist_stack = torch.stack(Parallel(n_jobs=n_jobs, prefer="threads")(
+            delayed(align_tree_matrix)(tree) for tree in tqdm(self.trees, desc="Aligning trees")
+        ))
         valid_mask = ~torch.isnan(dist_stack)
         confidence = valid_mask.float().mean(dim=0)
-
+        tol = 1e-14
         if method == "fp":
-            return self._fixed_point_aggregate(
-                dist_stack, valid_mask, confidence, labels,
-                func, unwrap, max_iter, tol, sigma_max
-            )
-
+            # ============================================================
+            # OPTIMIZED FIXED-POINT WITH ANDERSON ACCELERATION (m=2)
+            # ============================================================
+            # Warm start: median is an excellent robust initial estimate
+            D = self.distance_matrix(func = torch.nanmedian)[0]
+            D.fill_diagonal_(0.0)
+            # Pre-compute constants (avoid repeated allocations/computations)
+            dist_clean, valid_float = dist_stack.nan_to_num(0.0), valid_mask.float()
+            neg_inv_2sigma2 = -0.5 / (sigma_max ** 2)
+            # Anderson acceleration history (m=2 is optimal for this problem class)
+            G_prev, D_prev = None, None
+            pbar = tqdm(range(max_iter), desc="Fixed-point iteration")
+            for _ in pbar:
+                # Compute G(D) = Gaussian-weighted mean (fused operations)
+                residuals = dist_clean - D.unsqueeze(0)
+                weights = torch.exp(residuals.square().mul_(neg_inv_2sigma2)).mul_(valid_float)
+                G = weights.mul(dist_clean).sum(dim=0).div_(weights.sum(dim=0).clamp_(min=tol))
+                G.fill_diagonal_(0.0)
+                # Convergence check (before acceleration to measure true residual)
+                F = G - D
+                pbar.set_postfix({"residual": f"{(max_residual := F.abs().max().item()):.2e}"})
+                if max_residual < tol:
+                    D = G
+                    break
+                # Anderson acceleration: extrapolate using secant-like update
+                D_new = G
+                if G_prev is not None:
+                    # dG = G - G_prev, dD = D - D_prev
+                    # Optimal mixing: theta = -<F, dG-dD> / ||dG-dD||^2
+                    dG, dD = G - G_prev, D - D_prev
+                    dF = dG - dD  # change in residual
+                    dF_flat, F_flat = dF.view(-1), F.view(-1)
+                    if (denom := dF_flat.dot(dF_flat)) > tol:
+                        # Clamp for stability, allow slight extrapolation
+                        D_new = G + max(-0.5, min(-F_flat.dot(dF_flat) / denom, 2.0)) * dG
+                # Store history for next iteration
+                G_prev, D_prev, D = G, D, D_new
+                D.fill_diagonal_(0.0)
+            pbar.close()
+            self._log("Distance matrix computation complete.")
+            return D, confidence, labels
         # Standard aggregation
         avg_matrix = unwrap(func(dist_stack, dim=0))
-
         # Interpolate remaining NaNs using row/column means
-        nan_mask = torch.isnan(avg_matrix)
-        if nan_mask.any():
-            row_mean = unwrap(func(avg_matrix, dim=1))
-            col_mean = unwrap(func(avg_matrix, dim=0))
-            fill = (row_mean[:, None] + col_mean[None, :]) / 2
-            avg_matrix = torch.where(nan_mask, fill, avg_matrix)
-
+        if (nan_mask := torch.isnan(avg_matrix)).any():
+            row_mean, col_mean = unwrap(func(avg_matrix, dim=1)), unwrap(func(avg_matrix, dim=0))
+            avg_matrix = torch.where(nan_mask, (row_mean[:, None] + col_mean[None, :]) / 2, avg_matrix)
         self._log("Distance matrix computation complete.")
         return avg_matrix, confidence, labels
-
-    def _fixed_point_aggregate(
-        self,
-        dist_stack: torch.Tensor,
-        valid_mask: torch.Tensor,
-        confidence: torch.Tensor,
-        labels: List[str],
-        func: Callable,
-        unwrap: Callable,
-        max_iter: int,
-        tol: float,
-        sigma_max: float,
-    ) -> Tuple[torch.Tensor, torch.Tensor, List[str]]:
-        """
-        Fixed-point aggregation with adaptive Gaussian weighting.
-
-        Iteratively refines average matrix by weighting each tree's
-        contribution based on its similarity to current estimate.
-        """
-        n_trees = dist_stack.shape[0]
-        device = dist_stack.device
-
-        dist_flat = dist_stack.view(n_trees, -1)
-        valid_flat = valid_mask.view(n_trees, -1)
-
-        avg_matrix = unwrap(func(dist_stack, dim=0))
-        prev_weights = torch.zeros(n_trees, device=device)
-
-        with tqdm(total=max_iter, desc="Fixed-point iteration", unit="iter") as pbar:
-            for i in range(max_iter):
-                sigma = min(2 * sigma_max * i / max_iter, sigma_max)
-                avg_flat = avg_matrix.view(-1)
-
-                # Squared differences where valid
-                diff = torch.where(valid_flat, dist_flat - avg_flat, torch.zeros_like(dist_flat))
-                diff_sq = (diff ** 2).sum(dim=1)
-
-                # Reference norm
-                ref = torch.where(valid_flat, avg_flat.expand(n_trees, -1), torch.zeros_like(dist_flat))
-                ref_sq = (ref ** 2).sum(dim=1).clamp(min=1e-10)
-
-                # Gaussian similarity weights
-                sim = torch.exp(-sigma * diff_sq / ref_sq)
-                weights = sim / sim.sum().clamp(min=1e-10)
-
-                # Weighted average
-                w_exp = weights.view(n_trees, 1, 1)
-                weighted = torch.where(valid_mask, w_exp * dist_stack, torch.zeros_like(dist_stack))
-                w_sum = torch.where(valid_mask, w_exp.expand_as(dist_stack), torch.zeros_like(dist_stack))
-                w_sum = w_sum.sum(dim=0).clamp(min=1e-10)
-
-                avg_matrix = weighted.sum(dim=0) / w_sum
-
-                # Convergence check
-                change = torch.sqrt(n_trees * ((weights - prev_weights) ** 2).sum())
-                if change < tol:
-                    pbar.update(max_iter - i)
-                    break
-
-                prev_weights = weights
-                pbar.update(1)
-
-        return avg_matrix, confidence, labels
-
+    
     def normalize(self, batch_mode: bool = False) -> List[float]:
         """
         Normalize branch lengths across all trees.
-
         Optimizes scale factors so that the weighted average distance
         matrix has minimal variance. Each tree's branch lengths are
         multiplied by its optimal scale factor.
-
         Parameters
         ----------
         batch_mode : bool, default=False
-            If True, use stochastic batch optimization (faster for
-            large tree collections).
-
+            Unused, kept for API compatibility.
         Returns
         -------
         List[float]
             Scale factors applied to each tree.
         """
         labels = self.terminal_names()
-        n_labels = len(labels)
-        n_trees = len(self.trees)
+        n_labels, n_trees = len(labels), len(self.trees)
         label_idx = {lbl: i for i, lbl in enumerate(labels)}
-
-        # Adaptive hyperparameters
-        sqrt_n = np.sqrt(n_labels)
-        sqrt_t = np.sqrt(n_trees)
-        lr_log_start = -np.log10(n_labels) + (1 if batch_mode else -1)
-        lr_log_end = -np.log10(n_labels)
-        max_iter = 10 * int(sqrt_n + 1) if batch_mode else 10 * n_labels
-        n_passes = int(n_labels / sqrt_n + 1) if batch_mode else 1
-        batch_size = int(sqrt_t + 1) if batch_mode else n_trees
-
-        # Build aligned distance matrices
-        dist_matrices = torch.full((n_trees, n_labels, n_labels), float('nan'))
-        for t_idx, tree in enumerate(self.trees):
-            tree_labels = tree.terminal_names()
-            indices = torch.tensor([label_idx[lbl] for lbl in tree_labels], dtype=torch.long)
-            dist_matrices[t_idx, indices[:, None], indices] = tree.distance_matrix()[0]
-        dist_matrices.diagonal(dim1=-2, dim2=-1).fill_(0)
-
-        valid_mask = ~torch.isnan(dist_matrices)
-        valid_count = valid_mask.sum(dim=0).clamp(min=1).float()
-        dist_matrices = dist_matrices.nan_to_num_(0.0)
-
-        scales = torch.ones(n_trees, dtype=torch.float32)
-        norm_factor = 1.0 / (n_labels ** 2)
-
-        # Progress tracking
-        n_batches = (n_trees + batch_size - 1) // batch_size
-        total_iter = n_passes * max_iter * n_batches + (max_iter if batch_mode else 0)
-        pbar = tqdm(total=total_iter, desc="Normalizing", unit="iter")
-
-        lr_schedule = 10 ** (
-            lr_log_start + (lr_log_end - lr_log_start) *
-            torch.arange(max_iter) / max_iter
+        # Parallel computation of distance matrices and indices
+        results = Parallel(n_jobs=-1, prefer="threads")(
+            delayed(lambda t: ([label_idx[lbl] for lbl in t.terminal_names()], t.distance_matrix()[0]))(tree)
+            for tree in self.trees
         )
-
-        def optimize_batch(
-            batch_idx: List[int],
-            other_weighted_sum: torch.Tensor,
-            batch_valid: torch.Tensor,
-            batch_dist: torch.Tensor
-        ) -> torch.Tensor:
-            """Optimize scales for a batch via gradient descent."""
-            batch_sum = scales[batch_idx].sum()
-            params = scales[batch_idx].clone().requires_grad_(True)
-            optimizer = Adam([params], lr=lr_schedule[0].item())
-
-            for it in range(max_iter):
-                optimizer.param_groups[0]['lr'] = lr_schedule[it].item()
-
-                # Softplus + sum constraint
-                norm_params = torch.nn.functional.softplus(params)
-                norm_params = norm_params * (batch_sum / norm_params.sum())
-
-                weighted_batch = batch_dist * norm_params[:, None, None]
-                avg = (weighted_batch.sum(dim=0) + other_weighted_sum) / valid_count
-
-                residual = (weighted_batch - avg.unsqueeze(0)) * batch_valid
-                loss = residual.pow(2).sum() * norm_factor
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-                pbar.update(1)
-                self._log(f"Iter {it}: loss={loss.item():.6f}, lr={lr_schedule[it]:.2e}")
-
-            scales[batch_idx] = norm_params.detach()
-            return avg
-
-        # Main optimization loop
-        tree_indices = list(range(n_trees))
-        for _ in range(n_passes):
-            if batch_mode:
-                random.shuffle(tree_indices)
-
-            for start in range(0, n_trees, batch_size):
-                batch_idx = tree_indices[start:start + batch_size]
-                other_idx = list(set(tree_indices) - set(batch_idx))
-
-                other_sum = (
-                    (dist_matrices[other_idx] * scales[other_idx, None, None]).sum(dim=0)
-                    if other_idx else torch.zeros(n_labels, n_labels)
-                )
-                optimize_batch(batch_idx, other_sum, valid_mask[batch_idx], dist_matrices[batch_idx])
-
-        # Final global pass in batch mode
-        if batch_mode:
-            all_idx = list(range(n_trees))
-            optimize_batch(all_idx, torch.zeros(n_labels, n_labels), valid_mask, dist_matrices)
-
-        pbar.close()
-
-        # Apply scales to trees
-        final_scales = scales.tolist()
-        for t_idx, tree in enumerate(self.trees):
-            s = final_scales[t_idx]
-            for node in tree.contents.traverse_postorder():
-                edge_len = node.get_edge_length()
-                if edge_len is not None:
-                    node.set_edge_length(edge_len * s)
-
+        # Build aligned distance matrices (n_trees, n_labels, n_labels)
+        dist_matrices = torch.zeros((n_trees, n_labels, n_labels))
+        valid_mask = torch.zeros((n_trees, n_labels, n_labels), dtype=torch.bool)
+        for t_idx, (indices, dist_mat) in enumerate(results):
+            idx_tensor = torch.tensor(indices, dtype=torch.long)
+            ix_grid = (idx_tensor[:, None], idx_tensor)
+            dist_matrices[t_idx, ix_grid[0], ix_grid[1]] = dist_mat
+            valid_mask[t_idx, ix_grid[0], ix_grid[1]] = True
+        # Precompute quadratic form: loss = scales^T @ A @ scales
+        N_inv = 1.0 / (n_trees * n_labels * n_labels)
+        dist_over_count = dist_matrices / valid_mask.sum(dim=0).clamp(min=1).float()
+        A = (torch.diag((dist_matrices ** 2).sum(dim=(1, 2))) - torch.einsum('tij,sij->ts', dist_matrices, dist_over_count)) * N_inv
+        A = (A + A.T) * 0.5  # Symmetrize for numerical stability
+        A2 = A * 2.0  # Pre-compute for gradient
+        # Optimization with explicit gradients and manual Adam
+        params, m, v = torch.zeros(n_trees), torch.zeros(n_trees), torch.zeros(n_trees)
+        lr, beta1, beta2, eps, tol = 0.1, 0.9, 0.999, 1e-8, 1e-14
+        prev_loss, inv_n_trees = float('inf'), 1.0 / n_trees
+        with torch.no_grad():
+            for step in tqdm(range(1000), desc="Normalizing"):
+                # Forward: params -> softplus -> normalize to sum=n_trees
+                raw_scales = torch.nn.functional.softplus(params)
+                scales = raw_scales * (n_trees / raw_scales.sum())
+                # Loss and early stopping
+                As = A @ scales
+                if abs(prev_loss - (loss_val := scales.dot(As).item())) < tol:
+                    break
+                prev_loss = loss_val
+                # Gradient through normalization and softplus
+                grad_scales = A2 @ scales
+                grad_params = (n_trees / raw_scales.sum()) * (grad_scales - scales.dot(grad_scales) * inv_n_trees) * torch.sigmoid(params)
+                # Adam update
+                m.mul_(beta1).add_(grad_params, alpha=1.0 - beta1)
+                v.mul_(beta2).addcmul_(grad_params, grad_params, value=1.0 - beta2)
+                bias_correction1, bias_correction2 = 1.0 - beta1 ** (step + 1), 1.0 - beta2 ** (step + 1)
+                params.addcdiv_(m, v.div(bias_correction2).sqrt_().add_(eps), value=-lr / bias_correction1)
+        # Compute final scales and apply to trees
+        raw_scales = torch.nn.functional.softplus(params)
+        final_scales = (raw_scales * (n_trees / raw_scales.sum())).tolist()
+        Parallel(n_jobs=-1, prefer="threads")(
+            delayed(lambda t, s: [node.set_edge_length(node.get_edge_length() * s) 
+                                  for node in t.contents.traverse_postorder() 
+                                  if node.get_edge_length() is not None])(tree, scale)
+            for tree, scale in zip(self.trees, final_scales)
+        )
         return final_scales
-
+    
     def embed(
         self,
         dim: int,
@@ -1191,170 +909,82 @@ class MultiTree:
             ('dist_cutoff', conf.MAX_RANGE),
             ('save_mode', conf.ENABLE_SAVE_MODE),
             ('export_video', conf.ENABLE_VIDEO_EXPORT),
-            ('scale_fn', None),
-            ('lr_fn', None),
-            ('weight_exp_fn', None),
+            ('scale_fn', None), ('lr_fn', None), ('weight_exp_fn', None),
             ('normalize', False),
         ]
         params = {k: kwargs.get(k, v) for k, v in defaults}
-
         if params['normalize']:
             self.normalize(batch_mode=params['precise_opt'])
 
         params['save_mode'] |= params['export_video']
         params['export_video'] &= params['precise_opt']
-
         n_trees = len(self.trees)
         n_jobs = min(n_trees, os.cpu_count())
+        is_hyperbolic = geometry == 'hyperbolic'
+        EmbClass = embedding.LoidEmbedding if is_hyperbolic else embedding.EuclideanEmbedding
 
         try:
-            if geometry == 'hyperbolic':
-                self._log("Starting hyperbolic multi-embedding...")
-                scale = params['dist_cutoff'] / self.distance_matrix()[0].max()
-                curvature = -(scale ** 2)
+            self._log(f"Starting {geometry} multi-embedding...")
+            scale = params['dist_cutoff'] / self.distance_matrix()[0].max() if is_hyperbolic else 1
+            curvature = -(scale ** 2) if is_hyperbolic else None
 
-                def process_hyperbolic(idx_tree: Tuple[int, Tree]):
-                    idx, tree = idx_tree
-                    dist = tree.distance_matrix()[0]
-                    pts = utils.naive_embedding(dist * scale, dim, geometry='hyperbolic')
-                    emb = embedding.LoidEmbedding(
-                        points=pts, labels=tree.terminal_names(), curvature=curvature
-                    )
-                    return idx, dist, emb
+            def process_tree(idx_tree: Tuple[int, Tree]):
+                idx, tree = idx_tree
+                dist = tree.distance_matrix()[0]
+                pts = utils.naive_embedding(dist * scale, dim, geometry=geometry)
+                emb = EmbClass(points=pts, labels=tree.terminal_names(), curvature=curvature) if is_hyperbolic \
+                    else EmbClass(points=pts, labels=tree.terminal_names())
+                return idx, dist, emb
 
-                results = Parallel(n_jobs=n_jobs, backend='loky', return_as='generator')(
-                    delayed(process_hyperbolic)((i, t)) for i, t in enumerate(self.trees)
+            results = Parallel(n_jobs=n_jobs, backend='loky', return_as='generator')(
+                delayed(process_tree)((i, t)) for i, t in enumerate(self.trees)
+            )
+            dist_mats, emb_list = [None] * n_trees, [None] * n_trees
+            for idx, dist, emb in results:
+                dist_mats[idx], emb_list[idx] = dist, emb
+                self._log(f"Naive {geometry} embedding {idx + 1}/{n_trees} complete")
+
+            multi_emb = embedding.MultiEmbedding()
+            for emb in emb_list:
+                multi_emb.append(emb)
+            del emb_list
+            gc.collect()
+            self._log(f"Naive {geometry} embeddings complete.")
+
+            if params['precise_opt']:
+                self._log("Refining with precise optimization...")
+                pts_list, curvature = utils.precise_multiembedding(
+                    dist_mats, multi_emb, geometry=geometry,
+                    log_fn=self._log, time_stamp=self._timestamp, **params
                 )
-
-                dist_mats = [None] * n_trees
-                emb_list = [None] * n_trees
-
-                for idx, dist, emb in results:
-                    dist_mats[idx] = dist
-                    emb_list[idx] = emb
-                    self._log(f"Naive hyperbolic embedding {idx + 1}/{n_trees} complete")
-
                 multi_emb = embedding.MultiEmbedding()
-                for emb in emb_list:
-                    multi_emb.append(emb)
-                del emb_list
-                gc.collect()
-
-                self._log("Naive hyperbolic embeddings complete.")
-
-                if params['precise_opt']:
-                    self._log("Refining with precise optimization...")
-                    pts_list, curvature = utils.precise_multiembedding(
-                        dist_mats, multi_emb,
-                        geometry="hyperbolic",
-                        log_fn=self._log,
-                        time_stamp=self._timestamp,
-                        **params
-                    )
-
-                    multi_emb = embedding.MultiEmbedding()
-                    tree_labels = [t.terminal_names() for t in self.trees]
-                    for pts, labels in zip(pts_list, tree_labels):
-                        multi_emb.append(
-                            embedding.LoidEmbedding(
-                                points=pts, labels=labels, curvature=curvature
-                            )
-                        )
-                    del pts_list, dist_mats
-                    gc.collect()
-                    self._log("Precise hyperbolic embeddings complete.")
-                else:
-                    del dist_mats
-                    gc.collect()
-
-            else:  # Euclidean
-                self._log("Starting Euclidean multi-embedding...")
-
-                def process_euclidean(idx_tree: Tuple[int, Tree]):
-                    idx, tree = idx_tree
-                    dist = tree.distance_matrix()[0]
-                    pts = utils.naive_embedding(dist, dim, geometry='euclidean')
-                    emb = embedding.EuclideanEmbedding(
-                        points=pts, labels=tree.terminal_names()
-                    )
-                    return idx, dist, emb
-
-                results = Parallel(n_jobs=n_jobs, backend='loky', return_as='generator')(
-                    delayed(process_euclidean)((i, t)) for i, t in enumerate(self.trees)
-                )
-
-                dist_mats = [None] * n_trees
-                emb_list = [None] * n_trees
-
-                for idx, dist, emb in results:
-                    dist_mats[idx] = dist
-                    emb_list[idx] = emb
-                    self._log(f"Naive Euclidean embedding {idx + 1}/{n_trees} complete")
-
-                multi_emb = embedding.MultiEmbedding()
-                for emb in emb_list:
-                    multi_emb.append(emb)
-                del emb_list
-                gc.collect()
-
-                self._log("Naive Euclidean embeddings complete.")
-
-                if params['precise_opt']:
-                    self._log("Refining with precise optimization...")
-                    pts_list, _ = utils.precise_multiembedding(
-                        dist_mats, multi_emb,
-                        geometry="euclidean",
-                        log_fn=self._log,
-                        time_stamp=self._timestamp,
-                        **params
-                    )
-
-                    multi_emb = embedding.MultiEmbedding()
-                    tree_labels = [t.terminal_names() for t in self.trees]
-                    for pts, labels in zip(pts_list, tree_labels):
-                        multi_emb.append(
-                            embedding.EuclideanEmbedding(points=pts, labels=labels)
-                        )
-                    del pts_list, dist_mats
-                    gc.collect()
-                    self._log("Precise Euclidean embeddings complete.")
-                else:
-                    del dist_mats
-                    gc.collect()
+                for pts, labels in zip(pts_list, [t.terminal_names() for t in self.trees]):
+                    multi_emb.append(EmbClass(points=pts, labels=labels, curvature=curvature) if is_hyperbolic
+                                     else EmbClass(points=pts, labels=labels))
+                del pts_list
+                self._log(f"Precise {geometry} embeddings complete.")
+            del dist_mats
+            gc.collect()
 
         except Exception as e:
             self._log(f"Multi-embedding error: {e}")
             raise
 
         # Save result
-        self._save_embedding(multi_emb, geometry, dim)
-
-        if params['export_video']:
-            self._generate_video(fps=params['epochs'] // conf.VIDEO_LENGTH)
-
-        return multi_emb
-
-    def _save_embedding(
-        self,
-        emb: 'embedding.MultiEmbedding',
-        geometry: str,
-        dim: int
-    ) -> None:
-        """Save multi-embedding to timestamped directory."""
-        out_dir = os.path.join(
-            conf.OUTPUT_DIRECTORY,
-            self._timestamp.strftime('%Y-%m-%d_%H-%M-%S')
-        )
+        out_dir = os.path.join(conf.OUTPUT_DIRECTORY, self._timestamp.strftime('%Y-%m-%d_%H-%M-%S'))
         os.makedirs(out_dir, exist_ok=True)
-
         filepath = os.path.join(out_dir, f"{geometry}_multiembedding_{dim}d.pkl")
         try:
             with open(filepath, 'wb') as f:
-                pickle.dump(emb, f, protocol=pickle.HIGHEST_PROTOCOL)
+                pickle.dump(multi_emb, f, protocol=pickle.HIGHEST_PROTOCOL)
             self._log(f"Multi-embedding saved to {filepath}")
         except (IOError, pickle.PicklingError) as e:
             self._log(f"Save error: {e}")
             raise
+
+        if params['export_video']:
+            self._generate_video(fps=params['epochs'] // conf.VIDEO_LENGTH)
+        return multi_emb
 
     def _generate_video(self, fps: int = 10) -> None:
         """
@@ -1370,286 +1000,140 @@ class MultiTree:
         """
         # Theme configuration
         THEME = {
-            'background': '#1a1a2e',
-            'panel': '#1e2a4a',
-            'grid': '#2a2a4a',
-            'text': '#e8e8e8',
-            'text_dim': '#a0a0b0',
-            'accent': '#00d4ff',
-            'accent_alt': '#ff6b6b',
-            'highlight': '#ffd93d',
+            'background': '#1a1a2e', 'panel': '#1e2a4a', 'grid': '#2a2a4a',
+            'text': '#e8e8e8', 'text_dim': '#a0a0b0', 'accent': '#00d4ff',
+            'accent_alt': '#ff6b6b', 'highlight': '#ffd93d',
         }
-
         plt.rcParams.update({
-            'figure.facecolor': THEME['background'],
-            'figure.edgecolor': THEME['background'],
-            'axes.facecolor': THEME['panel'],
-            'axes.edgecolor': THEME['grid'],
-            'axes.labelcolor': THEME['text'],
-            'axes.titlecolor': THEME['text'],
-            'axes.grid': True,
-            'axes.axisbelow': True,
-            'axes.linewidth': 0.8,
-            'axes.titleweight': 'bold',
-            'axes.titlesize': 11,
-            'axes.labelsize': 9,
-            'grid.color': THEME['grid'],
-            'grid.linewidth': 0.4,
-            'grid.alpha': 0.5,
-            'xtick.color': THEME['text_dim'],
-            'ytick.color': THEME['text_dim'],
-            'xtick.labelsize': 8,
-            'ytick.labelsize': 8,
-            'text.color': THEME['text'],
-            'font.family': 'sans-serif',
-            'font.size': 9,
-            'legend.facecolor': THEME['panel'],
-            'legend.edgecolor': THEME['grid'],
-            'legend.fontsize': 8,
+            'figure.facecolor': THEME['background'], 'figure.edgecolor': THEME['background'],
+            'axes.facecolor': THEME['panel'], 'axes.edgecolor': THEME['grid'],
+            'axes.labelcolor': THEME['text'], 'axes.titlecolor': THEME['text'],
+            'axes.grid': True, 'axes.axisbelow': True, 'axes.linewidth': 0.8,
+            'axes.titleweight': 'bold', 'axes.titlesize': 11, 'axes.labelsize': 9,
+            'grid.color': THEME['grid'], 'grid.linewidth': 0.4, 'grid.alpha': 0.5,
+            'xtick.color': THEME['text_dim'], 'ytick.color': THEME['text_dim'],
+            'xtick.labelsize': 8, 'ytick.labelsize': 8, 'text.color': THEME['text'],
+            'font.family': 'sans-serif', 'font.size': 9,
+            'legend.facecolor': THEME['panel'], 'legend.edgecolor': THEME['grid'], 'legend.fontsize': 8,
         })
-
-        base_dir = os.path.join(
-            conf.OUTPUT_DIRECTORY,
-            self._timestamp.strftime('%Y-%m-%d_%H-%M-%S')
-        )
-
+        base_dir = os.path.join(conf.OUTPUT_DIRECTORY, self._timestamp.strftime('%Y-%m-%d_%H-%M-%S'))
         # Load metadata
         try:
-            metadata = np.load(
-                os.path.join(base_dir, "metadata.npy"),
-                allow_pickle=True
-            ).item()
-            n_trees = metadata['num_trees']
+            n_trees = np.load(os.path.join(base_dir, "metadata.npy"), allow_pickle=True).item()['num_trees']
         except FileNotFoundError:
-            tree_dirs = sorted([
-                d for d in os.listdir(base_dir) if d.startswith('tree_')
-            ])
-            n_trees = len(tree_dirs)
-
+            n_trees = len([d for d in os.listdir(base_dir) if d.startswith('tree_')])
         # Load aggregate data
         weights = -np.load(os.path.join(base_dir, "weight_exponents.npy"))
         lrs = np.log10(np.load(os.path.join(base_dir, "learning_rates.npy")) + conf.EPSILON)
         agg_costs = np.load(os.path.join(base_dir, "costs.npy"))
-
         try:
             scales = np.load(os.path.join(base_dir, "scales.npy"))
         except FileNotFoundError:
             scales = None
-
-        n_frames = len(weights)
-        epochs = np.arange(1, n_frames + 1)
+        n_frames, epochs = len(weights), np.arange(1, len(weights) + 1)
         is_hyperbolic = scales is not None and not np.all(scales == 1)
-
         if is_hyperbolic:
-            scale_active = scales.astype(bool)
-            scale_changed = np.concatenate([[True], np.diff(scales) != 0])
-            mask_changing = scale_active & scale_changed
-            mask_unchanged = scale_active & ~scale_changed
-
+            scale_active, scale_changed = scales.astype(bool), np.concatenate([[True], np.diff(scales) != 0])
+            mask_changing, mask_unchanged = scale_active & scale_changed, scale_active & ~scale_changed
         # Load per-tree data
         self._log(f"Loading data for {n_trees} trees...")
-
-        all_rms = []
-        all_costs = []
-
-        for t_idx in range(n_trees):
-            tree_dir = os.path.join(base_dir, f"tree_{t_idx}")
-            all_costs.append(np.load(os.path.join(tree_dir, "costs.npy")))
-            all_rms.append(np.load(os.path.join(tree_dir, "rmse.npy")))
-
-        all_rms = np.array(all_rms)  # (n_trees, n_frames)
-        all_costs = np.array(all_costs)
-
+        all_rms = np.array([np.load(os.path.join(base_dir, f"tree_{t}", "rmse.npy")) for t in range(n_trees)])
+        all_costs = np.array([np.load(os.path.join(base_dir, f"tree_{t}", "costs.npy")) for t in range(n_trees)])
         # Identify min/max RMS trees
-        final_rms = all_rms[:, -1]
-        min_rms_idx = np.argmin(final_rms)
-        max_rms_idx = np.argmax(final_rms)
-
+        min_rms_idx, max_rms_idx = np.argmin(all_rms[:, -1]), np.argmax(all_rms[:, -1])
+        extremal = {min_rms_idx, max_rms_idx}
         # Axis bounds
-        rms_bounds = (np.nanmin(all_rms) * 0.9, np.nanmax(all_rms) * 1.1)
-        lr_bounds = (lrs.min() - 0.1, lrs.max() + 0.1)
+        rms_bounds = (max(np.nanmin(all_rms) * 0.9, 1e-20), np.nanmax(all_rms) * 1.1)
         weight_bounds = (weights.min() * 0.95, weights.max() * 1.05)
-        cost_bounds = (
-            min(np.nanmin(agg_costs), np.nanmin(all_costs)) * 0.9,
-            max(np.nanmax(agg_costs), np.nanmax(all_costs)) * 1.1
-        )
-
+        cost_bounds = (max(min(np.nanmin(agg_costs), np.nanmin(all_costs)) * 0.9, 1e-20),
+                       max(np.nanmax(agg_costs), np.nanmax(all_costs)) * 1.1)
         # Setup output
-        out_dir = os.path.join(
-            conf.OUTPUT_VIDEO_DIRECTORY,
-            self._timestamp.strftime('%Y-%m-%d_%H-%M-%S')
-        )
+        out_dir = os.path.join(conf.OUTPUT_VIDEO_DIRECTORY, self._timestamp.strftime('%Y-%m-%d_%H-%M-%S'))
         os.makedirs(out_dir, exist_ok=True)
         video_path = os.path.join(out_dir, 're_evolution_multi.mp4')
-
         self._log(f"Generating video for {n_trees} trees...")
-
         # Create figure
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10), dpi=100)
-        ax_rms, ax_weight = axes[0]
-        ax_lr, ax_cost = axes[1]
-
-        # Tree colormap
-        cmap = get_cmap('plasma')
-        norm = Normalize(vmin=0, vmax=n_trees - 1)
+        fig, ((ax_rms, ax_weight), (ax_lr, ax_cost)) = plt.subplots(2, 2, figsize=(14, 10), dpi=100)
+        cmap, norm = get_cmap('plasma'), Normalize(vmin=0, vmax=n_trees - 1)
         tree_colors = [cmap(norm(i)) for i in range(n_trees)]
-
+        marker_style = dict(marker='o', markersize=3, markeredgecolor='white', markeredgewidth=0.01)
+        bbox_base = dict(boxstyle='round,pad=0.2', facecolor=THEME['panel'], linewidth=0.5, alpha=0.9)
         # RMS plot
-        lines_rms = []
-        for t_idx in range(n_trees):
-            is_extremal = t_idx in [min_rms_idx, max_rms_idx]
-            alpha = 1.0 if is_extremal else 0.3
-            lw = 2.0 if is_extremal else 0.5
-            line, = ax_rms.plot([], [], color=tree_colors[t_idx], linewidth=lw, alpha=alpha)
-            lines_rms.append(line)
-
-        ax_rms.set_xlim(1, n_frames)
-        ax_rms.set_ylim(*rms_bounds)
-        ax_rms.set_yscale('log')
-        ax_rms.set_xlabel('Epoch')
-        ax_rms.set_ylabel('Median RE (log)')
-        ax_rms.set_title(f'Median Relative Error ({n_trees} Trees)')
-
-        annot_min = ax_rms.annotate(
-            '', xy=(0, 0), fontsize=7, fontweight='bold', color='#50fa7b',
-            bbox=dict(boxstyle='round,pad=0.2', facecolor=THEME['panel'],
-                      edgecolor='#50fa7b', linewidth=0.5, alpha=0.9)
-        )
-        annot_max = ax_rms.annotate(
-            '', xy=(0, 0), fontsize=7, fontweight='bold', color='#ff5555',
-            bbox=dict(boxstyle='round,pad=0.2', facecolor=THEME['panel'],
-                      edgecolor='#ff5555', linewidth=0.5, alpha=0.9)
-        )
-
+        lines_rms = [ax_rms.plot([], [], color=tree_colors[t], linewidth=2.0 if t in extremal else 0.5,
+                                 alpha=1.0 if t in extremal else 0.3)[0] for t in range(n_trees)]
+        ax_rms.set(xlim=(1, n_frames), ylim=rms_bounds, yscale='log', xlabel='Epoch',
+                   ylabel='Median RE (log)', title=f'Median Relative Error ({n_trees} Trees)')
+        annot_min = ax_rms.annotate('', xy=(0, 0), fontsize=7, fontweight='bold', color='#50fa7b',
+                                    bbox={**bbox_base, 'edgecolor': '#50fa7b'})
+        annot_max = ax_rms.annotate('', xy=(0, 0), fontsize=7, fontweight='bold', color='#ff5555',
+                                    bbox={**bbox_base, 'edgecolor': '#ff5555'})
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
         sm.set_array([])
-        cbar_rms = fig.colorbar(sm, ax=ax_rms, fraction=0.046, pad=0.04, shrink=0.8)
-        cbar_rms.set_label('Tree Index')
-
+        fig.colorbar(sm, ax=ax_rms, fraction=0.046, pad=0.04, shrink=0.8).set_label('Tree Index')
         # Weight plot
-        line_weight, = ax_weight.plot(
-            [], [], color=THEME['accent'], linewidth=2,
-            marker='o', markersize=3, markerfacecolor=THEME['highlight'],
-            markeredgecolor='white', markeredgewidth=0.01
-        )
+        line_weight, = ax_weight.plot([], [], color=THEME['accent'], linewidth=2,
+                                      markerfacecolor=THEME['highlight'], **marker_style)
         line_scale_on = line_scale_off = None
         if is_hyperbolic:
-            line_scale_on, = ax_weight.plot(
-                [], [], 'o', markersize=5, markerfacecolor='#ff3333',
-                markeredgecolor='white', markeredgewidth=0.01,
-                label='Scale Learning On'
-            )
-            line_scale_off, = ax_weight.plot(
-                [], [], 'o', markersize=3, markerfacecolor=THEME['accent'],
-                markeredgecolor='white', markeredgewidth=0.01,
-                label='Scale Learning Off'
-            )
+            line_scale_on, = ax_weight.plot([], [], 'o', markersize=5, markerfacecolor='#ff3333',
+                                            markeredgecolor='white', markeredgewidth=0.01, label='Scale Learning On')
+            line_scale_off, = ax_weight.plot([], [], 'o', markersize=3, markerfacecolor=THEME['accent'],
+                                             markeredgecolor='white', markeredgewidth=0.01, label='Scale Learning Off')
             ax_weight.legend(loc='upper right', fontsize=7)
-        ax_weight.set_xlim(1, n_frames)
-        ax_weight.set_ylim(*weight_bounds)
-        ax_weight.set_xlabel('Epoch')
-        ax_weight.set_ylabel('−Weight Exponent')
-        ax_weight.set_title('Weight Evolution')
-
+        ax_weight.set(xlim=(1, n_frames), ylim=weight_bounds, xlabel='Epoch',
+                      ylabel='−Weight Exponent', title='Weight Evolution')
         # Learning rate plot
-        line_lr, = ax_lr.plot(
-            [], [], color='#50fa7b', linewidth=2,
-            marker='o', markersize=3, markerfacecolor=THEME['accent'],
-            markeredgecolor='white', markeredgewidth=0.01
-        )
-        ax_lr.set_xlim(1, n_frames)
-        ax_lr.set_ylim(*lr_bounds)
-        ax_lr.set_xlabel('Epoch')
-        ax_lr.set_ylabel('log₁₀(Learning Rate)')
-        ax_lr.set_title('Learning Rate Schedule')
-
+        line_lr, = ax_lr.plot([], [], color='#50fa7b', linewidth=2, markerfacecolor=THEME['accent'], **marker_style)
+        ax_lr.set(xlim=(1, n_frames), ylim=(lrs.min() - 0.1, lrs.max() + 0.1), xlabel='Epoch',
+                  ylabel='log₁₀(Learning Rate)', title='Learning Rate Schedule')
         # Cost plot
-        lines_cost = []
-        for t_idx in range(n_trees):
-            line, = ax_cost.plot(
-                [], [], color=tree_colors[t_idx],
-                linewidth=0.4, alpha=0.2
-            )
-            lines_cost.append(line)
-
-        line_agg_cost, = ax_cost.plot(
-            [], [], color='white', linewidth=2.5, label='Aggregate'
-        )
-        ax_cost.set_xlim(1, n_frames)
-        ax_cost.set_ylim(*cost_bounds)
-        ax_cost.set_yscale('log')
-        ax_cost.set_xlabel('Epoch')
-        ax_cost.set_ylabel('Cost (log)')
-        ax_cost.set_title('Cost Evolution')
+        lines_cost = [ax_cost.plot([], [], color=tree_colors[t], linewidth=0.4, alpha=0.2)[0] for t in range(n_trees)]
+        line_agg_cost, = ax_cost.plot([], [], color='white', linewidth=2.5, label='Aggregate')
+        ax_cost.set(xlim=(1, n_frames), ylim=cost_bounds, yscale='log', xlabel='Epoch',
+                    ylabel='Cost (log)', title='Cost Evolution')
         ax_cost.legend(loc='upper right', fontsize=8)
-
-        sm_cost = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-        sm_cost.set_array([])
-        cbar_cost = fig.colorbar(sm_cost, ax=ax_cost, fraction=0.046, pad=0.04, shrink=0.8)
-        cbar_cost.set_label('Tree Index')
-
+        fig.colorbar(plt.cm.ScalarMappable(cmap=cmap, norm=norm), ax=ax_cost,
+                     fraction=0.046, pad=0.04, shrink=0.8).set_label('Tree Index')
         # Borders
         for ax in [ax_rms, ax_weight, ax_lr, ax_cost]:
             for spine in ax.spines.values():
-                spine.set_edgecolor('#4a4a6a')
-                spine.set_linewidth(1.0)
-
+                spine.set(edgecolor='#4a4a6a', linewidth=1.0)
         fig.tight_layout()
         fig.canvas.draw()
         width, height = fig.canvas.get_width_height()
-
         # FFmpeg pipe
-        ffmpeg_cmd = [
-            'ffmpeg', '-y',
-            '-f', 'rawvideo', '-vcodec', 'rawvideo',
-            '-s', f'{width}x{height}', '-pix_fmt', 'rgba',
-            '-r', str(fps), '-i', '-',
-            '-c:v', 'libx264', '-preset', 'ultrafast',
-            '-crf', '23', '-pix_fmt', 'yuv420p',
+        proc = subprocess.Popen([
+            'ffmpeg', '-y', '-f', 'rawvideo', '-vcodec', 'rawvideo',
+            '-s', f'{width}x{height}', '-pix_fmt', 'rgba', '-r', str(fps), '-i', '-',
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-pix_fmt', 'yuv420p',
             '-movflags', '+faststart', video_path
-        ]
-
-        proc = subprocess.Popen(ffmpeg_cmd, stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
-
+        ], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
         try:
             for epoch in range(n_frames):
                 x = epochs[:epoch + 1]
-
                 for t_idx in range(n_trees):
                     lines_rms[t_idx].set_data(x, all_rms[t_idx, :epoch + 1])
-
+                    lines_cost[t_idx].set_data(x, all_costs[t_idx, :epoch + 1])
                 # Update annotations
-                min_val = all_rms[min_rms_idx, epoch]
-                max_val = all_rms[max_rms_idx, epoch]
+                min_val, max_val = all_rms[min_rms_idx, epoch], all_rms[max_rms_idx, epoch]
                 annot_min.set_text(f'Min: T{min_rms_idx}')
                 annot_min.xy = (epoch + 1, min_val)
                 annot_min.set_position((epoch + 1.5, min_val * 0.85))
                 annot_max.set_text(f'Max: T{max_rms_idx}')
                 annot_max.xy = (epoch + 1, max_val)
                 annot_max.set_position((epoch + 1.5, max_val * 1.15))
-
                 line_weight.set_data(x, weights[:epoch + 1])
-
                 if is_hyperbolic:
-                    m_on = mask_changing[:epoch + 1]
-                    m_off = mask_unchanged[:epoch + 1]
+                    m_on, m_off = mask_changing[:epoch + 1], mask_unchanged[:epoch + 1]
                     line_scale_on.set_data(x[m_on], weights[:epoch + 1][m_on])
                     line_scale_off.set_data(x[m_off], weights[:epoch + 1][m_off])
-
                 line_lr.set_data(x, lrs[:epoch + 1])
-
-                for t_idx in range(n_trees):
-                    lines_cost[t_idx].set_data(x, all_costs[t_idx, :epoch + 1])
                 line_agg_cost.set_data(x, agg_costs[:epoch + 1])
-
                 fig.canvas.draw()
                 proc.stdin.write(memoryview(fig.canvas.buffer_rgba()))
-
         finally:
             proc.stdin.close()
             proc.wait()
-
         plt.close(fig)
         plt.rcdefaults()
-
         self._log(f"Multi-tree video saved: {video_path}")

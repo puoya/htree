@@ -6,8 +6,8 @@ import logging
 import numpy as np
 
 from typing import Optional, Union, List,Callable
-import scipy.sparse.linalg as spla
 from datetime import datetime
+from joblib import Parallel, delayed
 
 import htree.conf as conf
 import htree.utils as utils
@@ -980,6 +980,79 @@ class EuclideanEmbedding(Embedding):
         self._log_info(f"Computed distance matrix with shape distance_matrix.shape")
 
         return torch.sqrt(EDM).fill_diagonal_(0), self.labels
+
+    def embed(
+        self,
+        dim: int,
+        geometry: str = 'euclidean',
+        curvature: Optional[float] = None,
+        precise_opt: bool = False,
+        **kwargs
+    ) -> 'Embedding':
+        """
+        Embed the Euclidean points into a target geometry.
+
+        Args:
+            dim: Target embedding dimension.
+            geometry: Target geometry ('euclidean' or 'hyperbolic').
+            curvature: For hyperbolic geometry, the target curvature (negative value).
+                       If None, curvature is learned during optimization.
+            precise_opt: Whether to run precise optimization after naive embedding.
+            **kwargs: Additional parameters passed to precise_embedding (epochs, lr_init, etc.)
+
+        Returns:
+            EuclideanEmbedding or LoidEmbedding depending on target geometry.
+
+        Raises:
+            ValueError: If geometry is invalid or curvature is non-negative for hyperbolic.
+        """
+        if geometry not in ('euclidean', 'hyperbolic'):
+            raise ValueError(f"Unknown geometry: {geometry}. Use 'euclidean' or 'hyperbolic'.")
+        if geometry == 'hyperbolic' and curvature is not None and curvature >= 0:
+            raise ValueError("Curvature must be negative for hyperbolic geometry.")
+
+        dist_mat = self.distance_matrix()[0]
+        if geometry == 'hyperbolic' and curvature is not None:
+            scale_factor = torch.sqrt(torch.abs(torch.tensor(curvature)))
+            dist_mat = dist_mat * scale_factor
+            scale_fn = lambda x1, x2, x3=None: False  # Disable scale learning
+        else:
+            scale_factor = None
+            scale_fn = None  # Enable scale learning (or irrelevant for Euclidean)
+
+        # Naive embedding
+        self._log_info(f"Initiating naive {geometry} embedding.")
+        if geometry == 'hyperbolic':
+            points = utils.naive_embedding(dist_mat, dim, geometry)
+        else:
+            points = utils.naive_embedding(dist_mat ** 2, dim, geometry)
+        self._log_info(f"Naive {geometry} embedding completed.")
+
+        if geometry == 'euclidean':
+            embedding = EuclideanEmbedding(points=points, labels=self.labels)
+        else:
+            init_curvature = -(scale_factor ** 2) if scale_factor is not None else torch.tensor(-1.0)
+            embedding = LoidEmbedding(points=points, labels=self.labels, curvature=init_curvature)
+
+        if precise_opt:
+            self._log_info(f"Initiating precise {geometry} embedding.")
+            if geometry == 'hyperbolic':
+                opt_result = utils.precise_embedding(
+                    dist_mat, dim, geometry,
+                    init_pts=points, scale_fn=scale_fn, log_fn=self._log_info, **kwargs
+                )
+            else:
+                opt_result = utils.precise_embedding(
+                    dist_mat ** 2, dim, geometry,
+                    init_pts=points, log_fn=self._log_info, **kwargs
+                )
+            pts_list, learned_curvature = (opt_result, 1) if geometry == 'euclidean' else opt_result
+            embedding.points = pts_list[0] if isinstance(pts_list, list) else pts_list
+            if geometry == 'hyperbolic':
+                embedding.curvature = torch.tensor(curvature) if curvature is not None else torch.tensor(learned_curvature)
+            self._log_info(f"Precise {geometry} embedding completed.")
+
+        return embedding
 #############################################################################################
 #############################################################################################
 #############################################################################################
@@ -1145,65 +1218,94 @@ class MultiEmbedding:
                 model = procrustes.EuclideanProcrustes(embedding, reference_embedding,**filtered_kwargs)
                 self.embeddings[i] = model.map(embedding)
 
-    def distance_matrix(self, 
+    def distance_matrix(self,
                         func: Callable[[torch.Tensor], torch.Tensor] = torch.nanmean) -> torch.Tensor:
         """
         Computes the aggregated distance matrix from all embeddings, accommodating for different-sized matrices.
-
         Parameters:
             func (Callable[[torch.Tensor], torch.Tensor]): Function to compute the aggregate. Default is torch.nanmean.
-
         Returns:
             torch.Tensor: The aggregated distance matrix.
         """
-        # Get all unique labels across embeddings
+        # Early exit for empty embeddings
+        if not self.embeddings:
+            return torch.tensor([]), []
 
+        # Get all unique labels - single pass with set
         all_labels = sorted({label for embedding in self.embeddings for label in embedding.labels})
         n = len(all_labels)
-        
-        data_type = None
-        for embedding in self.embeddings:
-            if data_type is None:
-                data_type = embedding._points.dtype
-                break
-
-        # Prepare stacked matrices and counts
-        stacked_matrices = torch.zeros((len(self.embeddings), n, n), dtype=data_type)
-        stacked_counts = torch.zeros((len(self.embeddings), n, n), dtype=data_type)
-        
-        cnt = 0
-        for embedding in self.embeddings:
-            idx = torch.tensor(  [all_labels.index(label) for label in embedding.labels] )
-            distance_matrix = torch.full((n, n), float('nan'),  dtype=data_type)
-            distance_matrix[idx[:, None], idx] = embedding.distance_matrix()[0]
-            stacked_matrices[cnt] = distance_matrix
-            stacked_counts[cnt] = ~torch.isnan(distance_matrix)
-            cnt = cnt + 1
-        
+        label_to_idx = {label: i for i, label in enumerate(all_labels)}
+        # Pre-allocate with NaN (avoids separate full() + assignment)
+        stacked_matrices = torch.full((len(self.embeddings), n, n), float('nan'),
+                                       dtype=self.embeddings[0]._points.dtype)
+        # Local function for parallel processing (defined inside as required)
+        def process_embedding(emb_idx, embedding):
+            # Use list comprehension with dict lookup (O(1) per label)
+            idx = torch.tensor([label_to_idx[label] for label in embedding.labels], dtype=torch.long)
+            return emb_idx, idx, embedding.distance_matrix()[0]
+        # Parallel processing with threading backend (shared memory, no pickling issues)
+        results = Parallel(n_jobs=-1, prefer="threads", batch_size="auto")(
+            delayed(process_embedding)(i, emb) for i, emb in enumerate(self.embeddings)
+        )
+        # Fill stacked matrices - vectorized index assignment
+        for emb_idx, idx, dm in results:
+            stacked_matrices[emb_idx, idx[:, None], idx] = dm
+        # Clear results to free memory
+        del results
+        # Compute aggregation
         agg_distance_matrix = func(stacked_matrices, dim=0)
         if isinstance(agg_distance_matrix, tuple):
             agg_distance_matrix = agg_distance_matrix[0]
+        # Free large tensor immediately
+        del stacked_matrices
+        # Identify NaN positions
+        nan_mask = torch.isnan(agg_distance_matrix)
+        if nan_mask.any():
+            # Clone once for stable reference values
+            agg_clone = agg_distance_matrix.clone()
+            valid_mask = ~nan_mask
+            # Get NaN indices as tuple for efficient indexing
+            nan_rows, nan_cols = torch.where(nan_mask)
+            # Pre-compute row and column valid masks to avoid recomputation
+            # This is a memory vs speed tradeoff - caching saves repeated mask operations
+            def compute_replacement(k):
+                i, j = nan_rows[k].item(), nan_cols[k].item()
+                # Use pre-computed valid_mask for fast boolean indexing
+                row_vals = agg_clone[i, valid_mask[i]]
+                col_vals = agg_clone[valid_mask[:, j], j]
+                if row_vals.numel() == 0 and col_vals.numel() == 0:
+                    return None
+                # Combine and compute - avoid creating intermediate tensor if one is empty
+                combined = (col_vals if row_vals.numel() == 0 else
+                            row_vals if col_vals.numel() == 0 else
+                            torch.cat((row_vals, col_vals)))
+                result = func(combined)
+                if isinstance(result, tuple):
+                    result = result[0]
+                return result.item() if result.numel() == 1 else result
 
-        # Identify indices where NaN values exist
-        nan_indices = torch.nonzero(torch.isnan(agg_distance_matrix), as_tuple=False)
-        # Iterate over all NaN indices and compute the replacement values
-        agg_distance_matrix_ = agg_distance_matrix.clone()
-        for idx in nan_indices:
-            i, j = idx[0], idx[1]
-            # Extract non-NaN values in the i-th row and j-th column
-            row_non_nan = agg_distance_matrix_[i, ~torch.isnan(agg_distance_matrix_[i, :])]
-            col_non_nan = agg_distance_matrix_[~torch.isnan(agg_distance_matrix_[:, j]), j]
+            # Parallel NaN replacement computation
+            num_nans = len(nan_rows)
+            # Only parallelize if there are enough NaNs to justify overhead
+            if num_nans > 100:
+                replacements = Parallel(n_jobs=-1, prefer="threads", batch_size="auto")(
+                    delayed(compute_replacement)(k) for k in range(num_nans)
+                )
+                # Apply replacements in batch
+                for k, val in enumerate(replacements):
+                    if val is not None:
+                        agg_distance_matrix[nan_rows[k], nan_cols[k]] = val
+            else:
+                # Sequential for small number of NaNs (avoid parallel overhead)
+                for k in range(num_nans):
+                    val = compute_replacement(k)
+                    if val is not None:
+                        agg_distance_matrix[nan_rows[k], nan_cols[k]] = val
+            del agg_clone
 
-            if row_non_nan.numel() == 0 and col_non_nan.numel() == 0:
-                continue  # No non-NaN values available to estimate
-            combined_non_nan = torch.cat((row_non_nan, col_non_nan))
-            # Replace the NaN value with the estimated value
-            agg_distance_matrix[i, j] = func(combined_non_nan)
-
-        self._log_info(f"Computed distance matrix with NaN replacements.")
+        self._log_info("Computed distance matrix with NaN replacements.")
         return agg_distance_matrix, all_labels
-    
-    ################################################################################################
+
     def reference_embedding(self, **kwargs) -> 'Embedding':
         params = {  
             key: kwargs.get(key, default) for key, default in {
@@ -1219,13 +1321,38 @@ class MultiEmbedding:
             }.items()
         }
 
-        if self.curvature < 0 :
-            geometry = 'hyperbolic'
-        else:
-            geometry = 'euclidean'
-
+        geometry = 'hyperbolic' if self.curvature < 0 else 'euclidean'
+        
         try:
-            embedding = (self._embed_hyperbolic if geometry == 'hyperbolic' else self._embed_euclidean)(self.dimension, **params)
+            dist_mat = self.distance_matrix(func=params['func'])[0]
+            scale_factor = torch.sqrt(torch.abs(self.curvature)) if geometry == 'hyperbolic' else None
+            if scale_factor is not None:
+                dist_mat = dist_mat * scale_factor
+            
+            # Naive embedding
+            self._log_info(f"Initiating naive {geometry} embedding.")
+            points = utils.naive_embedding(dist_mat, self.dimension, geometry)
+            self._log_info(f"Naive {geometry} embedding completed.")
+            
+            if geometry == 'hyperbolic':
+                embedding = LoidEmbedding(points=points, labels=self.labels(), curvature=-(scale_factor ** 2))
+            else:
+                embedding = EuclideanEmbedding(points=points, labels=self.labels())
+            
+            if params['precise_opt']:
+                self._log_info(f"Initiating precise {geometry} embedding.")
+                pts_list, curvature = utils.precise_embedding(
+                    dist_mat, self.dimension, geometry, init_pts=points,
+                    epochs=params['epochs'], log_fn=self._log_info, lr_fn=params['lr_fn'],
+                    scale_fn=(lambda x1, x2, x3=None: False) if geometry == 'hyperbolic' else params['scale_fn'],
+                    weight_exp_fn=params['weight_exp_fn'], lr_init=params['lr_init'],
+                    save_mode=params['save_mode'], time_stamp=self._current_time
+                )
+                embedding.points = pts_list[0] if isinstance(pts_list, list) else pts_list
+                if geometry == 'hyperbolic':
+                    embedding.curvature *= curvature
+                self._log_info(f"Precise {geometry} embedding completed.")
+                
         except Exception as e:
             self._log_info(f"Error during embedding: {e}")
             raise
@@ -1242,66 +1369,3 @@ class MultiEmbedding:
             raise
 
         return embedding
-    ################################################################################################
-    def _embed_euclidean(self, dim: int, **params) -> 'Embedding':
-        """Handle naive and precise Euclidean embeddings."""
-        dist_mat = self.distance_matrix(func = params['func'])[0]
-        # Naive Euclidean embedding
-        self._log_info("Initiating naive Euclidean embedding.")
-        points = self._naive_euclidean_embedding(dist_mat, dim)
-        embeddings = EuclideanEmbedding(points=points, labels=self.labels())
-        self._log_info("Naive Euclidean embedding completed.")
-        if params['precise_opt']:
-            self._log_info("Initiating precise Euclidean embedding.")
-            embeddings.points = self._precise_euclidean_embedding(dist_mat, dim, points, **params)
-            self._log_info("Precise Euclidean embedding completed.")
-        return embeddings
-    ################################################################################################
-    def _naive_euclidean_embedding(self, dist_mat, dim):
-        n = dist_mat.shape[0]
-        J = torch.eye(n) - 1/n
-        J = J.to(torch.float64)
-        G = -0.5 * J @ dist_mat @ J
-        vals, vecs = (torch.linalg.eigh(G) if dim >= n else 
-                      map(torch.tensor, spla.eigsh(G.cpu().numpy(), k=dim, which='LM')))
-        X = vecs[:, vals.argsort(descending=True)] * vals.clamp(min=0).sqrt()
-        return X.t() if dim <= n else torch.cat([X.t(), torch.zeros(dim - n, n)], dim=0)
-    ################################################################################################
-    def _precise_euclidean_embedding(self, dist_mat, dim, points, **params):
-        return utils.euclidean_embedding(dist_mat, dim, init_pts=points, log_fn=self._log_info, time_stamp=self._current_time, **params)
-    ################################################################################################
-    def _embed_hyperbolic(self, dim: int, **params) -> 'Embedding':
-        """Handle naive and precise hyperbolic embeddings."""
-        scale_factor = torch.sqrt(torch.abs(self.curvature))
-        dist_mat = self.distance_matrix(func = params['func'])[0] * scale_factor
-        # Naive hyperbolic embedding
-        self._log_info("Initiating naive hyperbolic embedding.")
-        points = self._naive_hyperbolic_embedding(dist_mat, dim)
-        embeddings = LoidEmbedding(points=points, labels=self.labels(), curvature=-(scale_factor ** 2))
-        self._log_info("Naive hyperbolic embedding completed.")
-        if params['precise_opt']:
-            self._log_info("Initiating precise hyperbolic embedding.")
-            points, scale = self._precise_hyperbolic_embedding(dist_mat, dim, points, **params)
-            embeddings.points = points
-            embeddings.curvature *= scale**2
-        return embeddings
-    ################################################################################################
-    def _naive_hyperbolic_embedding(self, dist_mat, dim):
-        gramian = -torch.cosh(dist_mat)
-        points = utils.lgram_to_pts(gramian, dim)
-        for n in range(points.size(1)):
-            points[:, n] = utils.hyperbolic_proj(points[:, n])
-            points[0, n] = torch.sqrt(1 + torch.sum(points[1:, n] ** 2))
-        return points
-    ################################################################################################
-    def _precise_hyperbolic_embedding(self, dist_mat, dim, points, **params):
-        scale_fn = lambda x1, x2, x3=None: False 
-        pts, scale = utils.hyperbolic_embedding(
-            dist_mat, dim, init_pts=points, epochs=params['epochs'],
-            log_fn=self._log_info, lr_fn=params['lr_fn'], scale_fn=scale_fn, 
-            weight_exp_fn=params['weight_exp_fn'], lr_init=params['lr_init'], 
-            save_mode=params['save_mode'], time_stamp=self._current_time
-        )
-        self._log_info("Precise hyperbolic embedding completed.")
-        return pts, scale
-

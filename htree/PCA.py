@@ -3,8 +3,8 @@ from datetime import datetime
 import torch
 # from logger import get_logger, logging_enabled, get_time
 # import utils
-from .logger import get_logger, logging_enabled, get_time
-from . import utils
+from htree.logger import get_logger, logging_enabled, get_time
+import htree.utils as utils
 
 class PCA:
     """

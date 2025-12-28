@@ -10,6 +10,7 @@ from typing import Optional, Any, Tuple, List
 
 import htree.conf as conf
 import htree.embedding as embedding
+from joblib import Parallel, delayed
 ###########################################################################
 def _project_to_hyperboloid(
     embedding: np.ndarray, 
@@ -50,7 +51,7 @@ def _project_to_hyperboloid(
         f_prime = 2 * r2 * (s * residual / lorentz + s - 1)
         f_double = 2 * r2 * (1 + residual / lorentz + scaled_r2 * t / lorentz**3)
         
-        safe = np.abs(f_double) > 1e-200
+        safe = np.abs(f_double) > tol
         delta = np.divide(f_prime, f_double, where=safe, out=np.zeros_like(f_prime))
         
         active_idx = np.flatnonzero(active)
@@ -93,46 +94,29 @@ def naive_embedding(
         raise ValueError(f"Unknown geometry: {geometry}. Use 'euclidean' or 'hyperbolic'.")
     if geometry == "hyperbolic" and dim < 1:
         raise ValueError("Target dimension must be at least 1 for hyperbolic geometry.")
-    n = dist_mat.shape[0]
-    device, dtype = dist_mat.device, dist_mat.dtype
+    n, device, dtype = dist_mat.shape[0], dist_mat.device, dist_mat.dtype
     embed_dim = min(dim, n if geometry == "euclidean" else n - 1)
+    dist_mat = dist_mat.detach().cpu().to(torch.float64).numpy()
     if geometry == "euclidean":
         # ─────────────────────────────────────────────────────────────────────
         # Euclidean: Classical MDS via double-centered Gram matrix
         # ─────────────────────────────────────────────────────────────────────
-
         # Gram matrix: implicit double-centered form from squared distances
-        dist_sq = dist_mat.detach().cpu().numpy()
-        def gram_matvec(v):
-            """LinearOperator avoids materializing G, computing G @ v on-the-fly."""
-            v_centered = v - v.mean()
-            result = dist_sq @ v_centered
-            return -0.5 * (result - result.mean())
-
-        gram_op = spla.LinearOperator(
-            shape=(n, n), matvec=gram_matvec, rmatvec=gram_matvec, dtype=dist_sq.dtype
-        )
-
+        row_mean, col_mean = dist_mat.mean(axis=1, keepdims=True), dist_mat.mean(axis=0, keepdims=True)
+        G = -0.5 * (dist_mat - row_mean - col_mean + dist_mat.mean())
+        G = 0.5 * (G + G.T)
         if embed_dim < n:
             # Partial eigendecomposition: largest magnitude eigenvalues
-            eigenvalues, eigenvectors = spla.eigsh(gram_op, k=embed_dim, which="LM")
+            eigenvalues, eigenvectors = la.eigh(G, subset_by_index=[n - embed_dim, n - 1])
         else:
             # Full spectrum requested: materialize Gram matrix and use dense solver
-            row_mean = dist_sq.mean(axis=1, keepdims=True)
-            col_mean = dist_sq.mean(axis=0, keepdims=True)
-            total_mean = dist_sq.mean()
-            G = -0.5 * (dist_sq - row_mean - col_mean + total_mean)
-            # Use symmetric dense eigendecomposition
             evals_all, evecs_all = np.linalg.eigh(G)  # ascending order
-            # take largest embed_dim eigenpairs (descending)
-            order = np.argsort(evals_all)[::-1]
-            eigenvalues = evals_all[order][:embed_dim]
-            eigenvectors = evecs_all[:, order][:, :embed_dim]
+        # eigh returns ascending order — reverse to descending
+        eigenvalues = eigenvalues[::-1].copy()
+        eigenvectors = eigenvectors[:, ::-1].copy()
+        # Clamp negative eigenvalues
+        eigenvalues = np.maximum(eigenvalues, 0)
 
-        # Sort descending and clamp negative eigenvalues to zero
-        order = np.argsort(eigenvalues)[::-1]
-        eigenvalues = np.maximum(eigenvalues[order], 0)
-        eigenvectors = eigenvectors[:, order]
         # Embedding: X = (V Λ^{1/2})^T → shape (embed_dim, n)
         embedding = torch.as_tensor(
             (eigenvectors * np.sqrt(eigenvalues)).T, dtype=dtype, device=device
@@ -142,19 +126,17 @@ def naive_embedding(
         # Hyperbolic: Lorentzian Gram factorization + hyperboloid projection
         # ─────────────────────────────────────────────────────────────────────
         # Gram matrix: Lorentzian form G_ij = -cosh(d_ij)
-        dist = dist_mat.detach().cpu().to(torch.float64).numpy()
-        gram = -np.cosh(dist)
+        gram = -np.cosh(dist_mat)
         # Partial eigendecomposition: timelike (most negative) + spacelike (most positive)
         eval_time, evec_time = la.eigh(gram, subset_by_index=[0, 0])
         eval_space, evec_space = la.eigh(gram, subset_by_index=[n - embed_dim, n - 1])
         # Reorder spacelike descending and clamp negative eigenvalues to zero
-        eval_space = np.maximum(eval_space[::-1], 0)
-        evec_space = evec_space[:, ::-1]
+        eval_space, evec_space = np.maximum(eval_space[::-1], 0), evec_space[:, ::-1]
         # Embedding: X = (V |Λ|^{1/2})^T → shape (dim + 1, n)
         # X[0] = time component, X[1:] = spatial components
         embedding = np.zeros((embed_dim + 1, n), dtype=np.float64)
         embedding[0] = np.sqrt(-eval_time[0]) * evec_time[:, 0]
-        embedding[1 : embed_dim + 1] = np.sqrt(eval_space)[:, None] * evec_space.T
+        embedding[1:] = np.sqrt(eval_space)[:, None] * evec_space.T
         # Ensure consistent orientation (positive time component)
         if embedding[0, 0] < 0:
             embedding = -embedding
@@ -163,79 +145,56 @@ def naive_embedding(
             _project_to_hyperboloid(embedding), dtype=torch.float64, device=device
         )
     # Pad with zeros so the first axis is always the requested dimension
-    target_rows = dim if geometry == "euclidean" else (dim + 1)
-    cur_rows = embedding.shape[0]
-    if cur_rows < target_rows:
-        embedding = torch.cat([embedding, embedding.new_zeros(target_rows - cur_rows, n)], dim=0)
-
+    target_rows = dim if geometry == "euclidean" else dim + 1
+    if embedding.shape[0] < target_rows:
+        embedding = torch.cat([embedding, embedding.new_zeros(target_rows - embedding.shape[0], n)], dim=0)
     return embedding
-###########################################################################
-def _setup_params(dist_mat, **kwargs):
-    """Merge kwargs with defaults and initialize dynamic functions."""
-    defaults = {
-        "init_pts": None,
-        "epochs": conf.TOTAL_EPOCHS,
-        "log_fn": None,
-        "lr_fn": None,
-        "weight_exp_fn": None,
-        "scale_fn": None,
-        "lr_init": conf.INITIAL_LEARNING_RATE,
-        "save_mode": conf.ENABLE_SAVE_MODE,
-        "dist_cutoff": conf.MAX_RANGE,
-        "time_stamp": "",
-        "path": conf.OUTPUT_VIDEO_DIRECTORY,
-    }
-    params = {k: kwargs.get(k, v) for k, v in defaults.items()}
-    if params["weight_exp_fn"] is None:
-        params["weight_exp_fn"] = lambda x1, x2, x3=None: compute_weight(x1, x2)
-    if params["lr_fn"] is None:
-        log_distances = torch.log10(dist_mat[dist_mat > 0])
-        scale = (log_distances.mean() - log_distances.min()).item()
-        params["lr_fn"] = lambda x1, x2, x3: compute_lr(x1, x2, x3, scale=log_span(dist_mat).item())
-    if params["save_mode"]:
-        params['path'] = os.path.join(conf.OUTPUT_DIRECTORY, params["time_stamp"].strftime("%Y-%m-%d_%H-%M-%S"))
-        os.makedirs(params['path'], exist_ok=True)
-        rel_err_denom = dist_mat.clone().fill_diagonal_(1.0)
-        weight_exps, lrs = [], []
-    if params["scale_fn"] is None:
-        params["scale_fn"] = lambda x1, x2, x3=None: compute_scale(x1, x2)
-    return params
 ###########################################################################
 def precise_embedding(dist_mat: torch.Tensor, dim: int, geometry: str, return_history: bool = False, **kwargs):
     """Compute precise embeddings in Euclidean or Hyperbolic geometry."""
-    
     # Input validation
     if not isinstance(dist_mat, torch.Tensor):
         raise ValueError("The 'dist_mat' must be a torch.Tensor.")
     if geometry not in {"euclidean", "hyperbolic"}:
         raise ValueError(f"Unknown geometry: {geometry}")
-
+    # Merge kwargs with defaults
+    params = {
+        "init_pts": None, "epochs": conf.TOTAL_EPOCHS, "log_fn": None, "lr_fn": None,
+        "weight_exp_fn": None, "scale_fn": None, "lr_init": conf.INITIAL_LEARNING_RATE,
+        "save_mode": conf.ENABLE_SAVE_MODE, "dist_cutoff": conf.MAX_RANGE,
+        "time_stamp": "", "path": conf.OUTPUT_VIDEO_DIRECTORY,
+    } | kwargs
+    # Initialize dynamic functions
+    if params["weight_exp_fn"] is None:
+        params["weight_exp_fn"] = lambda x1, x2, x3=None: compute_weight(x1, x2)
+    if params["lr_fn"] is None:
+        params["lr_fn"] = lambda x1, x2, x3: compute_lr(x1, x2, x3, scale=log_span(dist_mat).item())
+    if params["scale_fn"] is None:
+        params["scale_fn"] = lambda x1, x2, x3=None: compute_scale(x1, x2)
+    if params["save_mode"]:
+        params['path'] = os.path.join(conf.OUTPUT_DIRECTORY, params["time_stamp"].strftime("%Y-%m-%d_%H-%M-%S"))
+        os.makedirs(params['path'], exist_ok=True)
     # Configuration and initialization
-    params = _setup_params(dist_mat, **kwargs)
     n, device, dtype = dist_mat.size(0), dist_mat.device, dist_mat.dtype
     is_hyp = geometry == "hyperbolic"
     pad = len(str(params["epochs"]))
-
     # Initialize coordinates (tangent space for hyperbolic, ambient space for euclidean)
-    init_pts = params.get("init_pts")
-    if init_pts is None:
-        x = torch.empty(dim, n, device=device, dtype=dtype).uniform_(0.0, 0.01)
-    else:
-        x = hyperbolic_log(init_pts) if is_hyp else init_pts.clone()
+    init_pts = params["init_pts"]
+    x = (hyperbolic_log(init_pts) if is_hyp else init_pts.clone()) if init_pts is not None \
+        else torch.empty(dim, n, device=device, dtype=dtype).uniform_(0.0, 0.01)
     x = x.clone().detach().requires_grad_(True)
-
     # Optimizer and tracking history
     optimizer = optim.Adam([x], lr=params["lr_init"])
-    history = {"costs": [], "weight_exps": [], "lrs": [], "scales": []}
+    history = {"costs": [], "weight_exps": [], "lrs": [], "scales": [], "rmse": []}
     scale = torch.tensor(1.0, device=device, dtype=dtype)
-
+    tri_idx = torch.triu_indices(n, n, offset=1)
     # Training loop
     for epoch in range(params["epochs"]):
         optimizer.zero_grad(set_to_none=True)
         # Compute adaptive weight matrix
         weight_exp = params["weight_exp_fn"](epoch, params["epochs"], history["costs"])
         scaled_target = scale * dist_mat if is_hyp else dist_mat
-        weight_mat = scaled_target.clamp(min=1e-12).pow(weight_exp).fill_diagonal_(1)
+        weight_mat = scaled_target.clamp(min=1e-14).pow(weight_exp).fill_diagonal_(1)
         scale_learning = params["scale_fn"](epoch, params["epochs"], history["costs"]) if is_hyp else False
         # Compute pairwise distances (geometry-specific)
         if is_hyp:
@@ -249,27 +208,22 @@ def precise_embedding(dist_mat: torch.Tensor, dim: int, geometry: str, return_hi
         else:
             pts = x.t()
             sq_norms = pts.pow(2).sum(dim=1)
-            dist = torch.addmm(
-                sq_norms.unsqueeze(1) + sq_norms, pts, pts.t(), beta=1.0, alpha=-2.0
-            ).clamp_(min=0.0)
-
+            dist = torch.addmm(sq_norms.unsqueeze(1) + sq_norms, pts, pts.t(), beta=1.0, alpha=-2.0).clamp_(min=0.0)
         # Compute normalized weighted cost
         weighted_diff = (dist - scaled_target) * weight_mat
         weighted_denom = scaled_target * weight_mat
         cost = torch.norm(weighted_diff, p="fro") ** 2 / torch.norm(weighted_denom, p="fro") ** 2
-        cost.backward(retain_graph=is_hyp)
+        cost.backward(retain_graph=is_hyp)      
         # Sanitize gradients and step
         if x.grad is not None and x.grad.isnan().any():
             x.grad.nan_to_num_(nan=0.0)
         optimizer.step()
-        # Compute RMSE
+        # Compute relative error (reused for RMSE and save_mode)
         with torch.no_grad():
-            rel_err = (dist / scaled_target.clamp(min=1e-10)).sub_(1.0).pow_(2)
-            rel_err.fill_diagonal_(0.0)
-            tri_idx = torch.triu_indices(n, n, offset=1)
-            rmse = torch.sqrt(rel_err[tri_idx[0], tri_idx[1]].mean()).item()
-        history["rmse"] = history.get("rmse", [])
-        history["rmse"].append(rmse)
+            rel_err = (dist / scaled_target.clamp(min=1e-14)).sub_(1.0).abs().fill_diagonal_(0.0)
+            history["rmse"].append(torch.sqrt(rel_err[tri_idx[0], tri_idx[1]].pow_(2).mean()).item())
+            if params["save_mode"]:
+                np.save(os.path.join(params["path"], f"RE_{epoch + 1}.npy"), rel_err.cpu().numpy())
         # Update learning rate
         lr = params["lr_fn"](epoch, params["epochs"], history["costs"]) * params["lr_init"]
         optimizer.param_groups[0]["lr"] = lr
@@ -277,7 +231,7 @@ def precise_embedding(dist_mat: torch.Tensor, dim: int, geometry: str, return_hi
         history["costs"].append(cost.item())
         history["weight_exps"].append(weight_exp)
         history["scales"].append(scale.item() if is_hyp else 1.0)
-        history["lrs"].append(lr)
+        history["lrs"].append(lr)      
         # Logging
         if params["log_fn"]:
             params["log_fn"](
@@ -286,11 +240,6 @@ def precise_embedding(dist_mat: torch.Tensor, dim: int, geometry: str, return_hi
                 f"Learning Rate: {lr:.10f}, Weight Exponent: {weight_exp:.8f}, "
                 f"Scale Learning: {'Yes' if scale_learning else 'No'}"
             )
-        # Per-epoch relative error save
-        if params["save_mode"]:
-            with torch.no_grad():
-                rel_err = (dist / scaled_target).sub_(1.0).pow_(2).fill_diagonal_(0.0)
-                np.save(os.path.join(params["path"], f"RE_{epoch + 1}.npy"), rel_err.cpu().numpy())
     # Save all tracking histories
     if params["save_mode"]:
         for name, key in [("costs", "costs"), ("learning_rates", "lrs"),
@@ -484,7 +433,6 @@ def precise_multiembedding(dist_mats, multi_embs, geometry="hyperbolic", **kwarg
         For Euclidean: Tuple of (pts_list, None) where:
             pts_list: List of refined embeddings, each shape (dim, n_i).
     """
-    from joblib import Parallel, delayed
     
     if geometry not in ("euclidean", "hyperbolic"):
         raise ValueError(f"Unknown geometry: {geometry}. Use 'euclidean' or 'hyperbolic'.")
@@ -492,101 +440,74 @@ def precise_multiembedding(dist_mats, multi_embs, geometry="hyperbolic", **kwarg
     # ─────────────────────────────────────────────────────────────────────────
     # Parameter initialization
     # ─────────────────────────────────────────────────────────────────────────
-    defaults = {
-        'epochs': conf.TOTAL_EPOCHS, 'log_fn': None, 'lr_fn': None,
-        'weight_exp_fn': None, 'scale_fn': None, 'lr_init': conf.INITIAL_LEARNING_RATE,
-        'save_mode': conf.ENABLE_SAVE_MODE, 'time_stamp': ""
-    }
-    params = {k: kwargs.get(k, v) for k, v in defaults.items()}
+    epochs = kwargs.get('epochs', conf.TOTAL_EPOCHS)
+    log_fn = kwargs.get('log_fn')
+    lr_init = kwargs.get('lr_init', conf.INITIAL_LEARNING_RATE)
+    save_mode = kwargs.get('save_mode', conf.ENABLE_SAVE_MODE)
+    time_stamp = kwargs.get('time_stamp', "")
     
     # Default scheduling functions
     log_span_val = log_span(dist_mats[0]).item()
-    if params['weight_exp_fn'] is None:
-        params['weight_exp_fn'] = lambda e, t, _: compute_weight(e, t)
-    if params['scale_fn'] is None:
-        params['scale_fn'] = lambda e, t, _: compute_scale(e, t)
-    if params['lr_fn'] is None:
-        params['lr_fn'] = lambda e, t, _: compute_lr(e, t, _, scale=log_span_val)
-
-    # Output directory setup
-    save_path = None
-    if params['save_mode']:
-        save_path = os.path.join(
-            conf.OUTPUT_DIRECTORY, params['time_stamp'].strftime('%Y-%m-%d_%H-%M-%S')
-        )
-        os.makedirs(save_path, exist_ok=True)
-        # Create subdirectories for per-tree data
-        for tree_idx in range(len(dist_mats)):
-            tree_dir = os.path.join(save_path, f"tree_{tree_idx}")
-            os.makedirs(tree_dir, exist_ok=True)
-
+    weight_exp_fn = kwargs.get('weight_exp_fn') or (lambda e, t, _: compute_weight(e, t))
+    scale_fn = kwargs.get('scale_fn') or (lambda e, t, _: compute_scale(e, t))
+    lr_fn = kwargs.get('lr_fn') or (lambda e, t, _: compute_lr(e, t, _, scale=log_span_val))
+    
     num_trees = len(dist_mats)
     num_points = [emb.points.shape[1] for emb in multi_embs]
     total_points = sum(num_points)
-    epochs = params['epochs']
+    
+    # Output directory setup
+    save_path = None
+    if save_mode:
+        save_path = os.path.join(conf.OUTPUT_DIRECTORY, time_stamp.strftime('%Y-%m-%d_%H-%M-%S'))
+        os.makedirs(save_path, exist_ok=True)
+        for tree_idx in range(num_trees):
+            os.makedirs(os.path.join(save_path, f"tree_{tree_idx}"), exist_ok=True)
 
-    # Initialize tracking variables (shared structure for both geometries)
+    # Initialize tracking variables
     costs, weight_exps, lrs, scales_history = [], [], [], []
     per_tree_costs = [[] for _ in range(num_trees)]
     per_tree_rmse = [[] for _ in range(num_trees)]
     curvature = None
-
+    
     if geometry == "euclidean":
-        from joblib import Parallel, delayed
-        
         n_jobs = min(num_trees, os.cpu_count() or 1)
-        if params['log_fn']:
-            params['log_fn'](f"[Euclidean] Running decoupled optimization for {num_trees} trees in parallel (n_jobs={n_jobs})")
+        if log_fn:
+            log_fn(f"[Euclidean] Running decoupled optimization for {num_trees} trees in parallel (n_jobs={n_jobs})")
         
         def _run_single(i):
             emb, hist = precise_embedding(
-                dist_mats[i],
-                dim=multi_embs[i].points.shape[0],
-                geometry="euclidean",
-                init_pts=multi_embs[i].points.clone(),
-                epochs=epochs,
-                lr_init=params['lr_init'],
-                weight_exp_fn=params['weight_exp_fn'],
-                lr_fn=params['lr_fn'],
-                log_fn=None,  # suppress per-tree logging
-                save_mode=False,
+                dist_mats[i], dim=multi_embs[i].points.shape[0], geometry="euclidean",
+                init_pts=multi_embs[i].points.clone(), epochs=epochs, lr_init=lr_init,
+                weight_exp_fn=weight_exp_fn, lr_fn=lr_fn, log_fn=None, save_mode=False,
                 return_history=True,
             )
             return i, emb, hist
         
-        results = Parallel(n_jobs=n_jobs, backend='loky')(
-            delayed(_run_single)(i) for i in range(num_trees)
+        results = sorted(
+            Parallel(n_jobs=n_jobs, backend='loky')(delayed(_run_single)(i) for i in range(num_trees)),
+            key=lambda x: x[0]
         )
-        
-        results = sorted(results, key=lambda x: x[0])
         pts_list = [r[1] for r in results]
         histories = [r[2] for r in results]
         
         # Aggregate per-tree data
-        for tree_idx in range(num_trees):
-            per_tree_costs[tree_idx] = histories[tree_idx]["costs"]
-            per_tree_rmse[tree_idx] = histories[tree_idx]["rmse"]
+        per_tree_costs = [histories[i]["costs"] for i in range(num_trees)]
+        per_tree_rmse = [histories[i]["rmse"] for i in range(num_trees)]
         
-        # Weighted average cost
-        for epoch in range(epochs):
-            epoch_cost = sum(
-                per_tree_costs[i][epoch] * num_points[i] 
-                for i in range(num_trees)
-            ) / total_points
-            costs.append(epoch_cost)
+        # Vectorized aggregation of costs and learning rates
+        costs_array = np.array(per_tree_costs)
+        weights_array = np.array(num_points)[:, None]
+        costs = ((costs_array * weights_array).sum(axis=0) / total_points).tolist()
+        
         weight_exps = histories[0]["weight_exps"]
-        
-        for epoch in range(epochs):
-            epoch_lrs = [histories[i]["lrs"][epoch] for i in range(num_trees)]
-            geo_mean = np.exp(np.mean(np.log(np.array(epoch_lrs) + 1e-20)))
-            lrs.append(geo_mean)
-        
+        lrs = np.exp(np.mean(np.log(np.array([h["lrs"] for h in histories]) + 1e-20), axis=0)).tolist()
         scales_history = [1.0] * epochs
         
-        if params['log_fn']:
+        if log_fn:
             for epoch in range(0, epochs, max(1, epochs // 10)):
                 per_tree_str = ", ".join([f"T{i}:{per_tree_costs[i][epoch]:.6f}" for i in range(num_trees)])
-                params['log_fn'](
+                log_fn(
                     f"[Epoch {epoch + 1}/{epochs}], Geometry: euclidean, "
                     f"Avg Cost: {costs[epoch]:.8f}, Weight Exp: {weight_exps[epoch]:.8f}, Scale: 1.0, "
                     f"Per-tree: [{per_tree_str}]"
@@ -594,173 +515,127 @@ def precise_multiembedding(dist_mats, multi_embs, geometry="hyperbolic", **kwarg
 
     else:  # geometry == "hyperbolic"
         device, dtype = multi_embs[0].points.device, multi_embs[0].points.dtype
-        dim = multi_embs[0].points.shape[0]
         
-        # Pre-compute index slices
-        slices = []
-        idx = 0
+        # Pre-compute index slices and squared distance sums
+        slices, idx = [], 0
         for n in num_points:
             slices.append((idx, idx + n))
             idx += n
-            
-        # Pre-compute squared distance matrices
         dist_sq_sums = [dm.pow(2).sum() for dm in dist_mats]
 
         # Initialize tangent vectors for hyperbolic optimization
-        tangents = torch.cat([hyperbolic_log(emb.points) for emb in multi_embs], dim=1)
-        tangents = tangents.clone().requires_grad_(True)
-        optimizer = optim.Adam([tangents], lr=params['lr_init'])
+        tangents = torch.cat([hyperbolic_log(emb.points) for emb in multi_embs], dim=1).clone().requires_grad_(True)
+        optimizer = optim.Adam([tangents], lr=lr_init)
         
         # Initialize scale from curvature
         s = torch.sqrt(torch.abs(multi_embs[0].curvature))
 
-        # Local helper functions for hyperbolic
-        def compute_distance_matrix(pts):
-            """Compute hyperbolic distance matrix for points."""
-            flipped_pts = pts.clone()
-            flipped_pts[0, :] *= -1
-            return torch.arccosh(-(pts.T @ flipped_pts).clamp(max=-1))
-        
-        def get_points_from_params():
-            """Get hyperbolic points from tangent vectors."""
-            return tangents, lambda t, start, end: hyperbolic_exp(t[:, start:end])
-
-        def compute_cost(pts, dist_mat, weight_mat, scale):
-            """Relative weighted Frobenius error, excluding diagonal."""
-            dist = compute_distance_matrix(pts)
-            residual = (dist - scale * dist_mat) * weight_mat
-            reference = scale * dist_mat * weight_mat
-            return residual.pow(2).sum() / (reference.pow(2).sum() + 1e-10)
-
-        def compute_relative_error(pts, dist_mat, scale):
-            """Compute relative error matrix: ((d_ij / (s * D_ij)) - 1)^2"""
-            dist = compute_distance_matrix(pts)
-            scaled_target = scale * dist_mat
-            rel_err = (dist / (scaled_target + 1e-10)).sub_(1.0).pow_(2)
-            rel_err.fill_diagonal_(0.0)
-            return rel_err
-
-        def compute_consensus_scale(params_tensor):
-            """Compute optimal global scale via closed-form least squares."""
-            param_tensor, get_pts = get_points_from_params()
-            num, den = 0.0, 0.0
-            with torch.no_grad():
-                for (start, end), dm, dsq_sum, n in zip(
-                    slices, dist_mats, dist_sq_sums, num_points
-                ):
-                    pts = get_pts(param_tensor, start, end)
-                    dist = compute_distance_matrix(pts)
-                    dist_sq = dist.pow(2)
-                    num += n * dist_sq.sum() / dsq_sum
-                    den += n * (dist * dm).sum() / dsq_sum
-            return num / den
-
         # ─────────────────────────────────────────────────────────────────────────
         # Training loop (hyperbolic)
         # ─────────────────────────────────────────────────────────────────────────
-        param_tensor, get_pts = get_points_from_params()
-        
         for epoch in range(epochs):
             # Scheduling
-            p = params['weight_exp_fn'](epoch, epochs, costs)
+            p = weight_exp_fn(epoch, epochs, costs)
             weight_exps.append(p)
 
-            # Scale update
-            scale_learning = params['scale_fn'](epoch, epochs, costs)
+            # Scale update via closed-form least squares
+            scale_learning = scale_fn(epoch, epochs, costs)
             if scale_learning:
-                s = compute_consensus_scale(param_tensor)
-                current_scale = s.item() if isinstance(s, torch.Tensor) else s
-            else:
-                if isinstance(s, torch.Tensor) and s.requires_grad:
-                    s = s.detach().item()
-                current_scale = s.item() if isinstance(s, torch.Tensor) else s
+                num, den = 0.0, 0.0
+                with torch.no_grad():
+                    for (start, end), dm, dsq_sum, n in zip(slices, dist_mats, dist_sq_sums, num_points):
+                        pts = hyperbolic_exp(tangents[:, start:end])
+                        flipped_pts = pts.clone()
+                        flipped_pts[0, :] *= -1
+                        dist = torch.arccosh(-(pts.T @ flipped_pts).clamp(max=-1))
+                        num += n * dist.pow(2).sum() / dsq_sum
+                        den += n * (dist * dm).sum() / dsq_sum
+                s = num / den
+            elif isinstance(s, torch.Tensor) and s.requires_grad:
+                s = s.detach().item()
             
+            current_scale = s.item() if isinstance(s, torch.Tensor) else s
             scales_history.append(current_scale)
             
             # Learning rate update
-            lr = params['lr_fn'](epoch, epochs, costs) * params['lr_init']
+            lr = lr_fn(epoch, epochs, costs) * lr_init
             optimizer.param_groups[0]['lr'] = lr
             lrs.append(lr)
             
             # Forward pass: accumulate weighted cost
             total_cost = torch.tensor(0.0, device=device, dtype=dtype)
-            
             for tree_idx, ((start, end), dm, n) in enumerate(zip(slices, dist_mats, num_points)):
-                pts = get_pts(param_tensor, start, end)
+                pts = hyperbolic_exp(tangents[:, start:end])
+                
+                # Compute distance matrix once per tree
+                flipped_pts = pts.clone()
+                flipped_pts[0, :] *= -1
+                dist = torch.arccosh(-(pts.T @ flipped_pts).clamp(max=-1))
+                
+                # Compute scaled distance matrix once
+                scaled_dm = current_scale * dm
                 
                 # Weight matrix
-                weight_mat = (current_scale * dm).pow(p)
-                weight_mat.fill_diagonal_(1.0)
-                
-                # Per-tree cost
-                tree_cost = compute_cost(pts, dm, weight_mat, current_scale)
+                weight_mat = scaled_dm.pow(p)
+                weight_mat.fill_diagonal_(1.0)                
+                # Relative weighted Frobenius error (inlined compute_cost)
+                residual = (dist - scaled_dm) * weight_mat
+                reference = scaled_dm * weight_mat
+                tree_cost = torch.norm(residual, p="fro")  / torch.norm(reference, p="fro") ** 2 
                 per_tree_costs[tree_idx].append(tree_cost.item())
-                
                 total_cost = total_cost + tree_cost * n
                 
-                # Per-tree relative error
+                # Per-tree relative error (inlined, reusing dist and scaled_dm)
                 with torch.no_grad():
-                    re_mat = compute_relative_error(pts, dm, current_scale).cpu().numpy()
+                    rel_err = (dist / (scaled_dm + 1e-100)).sub_(1.0).abs()
+                    rel_err.fill_diagonal_(0.0)
+                    re_mat = rel_err.cpu().numpy()
                     tri_idx = np.triu_indices(re_mat.shape[0], k=1)
-                    tri_vals = re_mat[tri_idx[0], tri_idx[1]]
-                    rel_err = np.nanmedian(tri_vals)
-                    per_tree_rmse[tree_idx].append(rel_err)
+                    per_tree_rmse[tree_idx].append(np.mean(re_mat[tri_idx[0], tri_idx[1]] ** 2))
 
             # Backward pass with NaN protection
             optimizer.zero_grad(set_to_none=True)
             total_cost.backward()
-            
-            grad = param_tensor.grad
-            if grad is not None:
-                grad.nan_to_num_(nan=0.0)
+            if tangents.grad is not None:
+                tangents.grad.nan_to_num_(nan=0.0)
             optimizer.step()
 
             avg_cost = total_cost.item() / total_points
             costs.append(avg_cost)
             
-            if params['log_fn']:
+            if log_fn:
                 per_tree_str = ", ".join([f"T{i}:{c[-1]:.6f}" for i, c in enumerate(per_tree_costs)])
-                params['log_fn'](
+                log_fn(
                     f"[Epoch {epoch + 1}/{epochs}], Geometry: {geometry}, "
                     f"Scale Learning: {'Yes' if scale_learning else 'No'}, "
                     f"Avg Loss: {avg_cost:.8f}, Weight Exp: {p:.8f}, Scale: {current_scale:.8f}, "
                     f"Per-tree: [{per_tree_str}]"
                 )
 
-        pts_list = []
         with torch.no_grad():
-            for start, end in slices:
-                pts_list.append(hyperbolic_exp(tangents[:, start:end].detach()))
+            pts_list = [hyperbolic_exp(tangents[:, start:end].detach()) for start, end in slices]
 
         # Compute final curvature
-        s_final = s.detach().item() if isinstance(s, torch.Tensor) else s
-        curvature = -s_final ** 2
+        curvature = -(s.detach().item() if isinstance(s, torch.Tensor) else s) ** 2
 
     # ─────────────────────────────────────────────────────────────────────────
     # Save training curves (unified for both geometries)
     # ─────────────────────────────────────────────────────────────────────────
     if save_path:
-        # Aggregate data
         np.save(os.path.join(save_path, "weight_exponents.npy"), weight_exps)
         np.save(os.path.join(save_path, "learning_rates.npy"), lrs)
         np.save(os.path.join(save_path, "costs.npy"), costs)
         np.save(os.path.join(save_path, "scales.npy"), scales_history)
         
-        # Per-tree costs and rmse
         for tree_idx in range(num_trees):
             tree_dir = os.path.join(save_path, f"tree_{tree_idx}")
             np.save(os.path.join(tree_dir, "costs.npy"), per_tree_costs[tree_idx])
             np.save(os.path.join(tree_dir, "rmse.npy"), per_tree_rmse[tree_idx])
         
-        # Save metadata
-        metadata = {
-            'num_trees': num_trees,
-            'num_points': num_points,
-            'total_points': total_points,
-            'epochs': epochs,
-            'geometry': geometry
-        }
-        np.save(os.path.join(save_path, "metadata.npy"), metadata)
+        np.save(os.path.join(save_path, "metadata.npy"), {
+            'num_trees': num_trees, 'num_points': num_points, 'total_points': total_points,
+            'epochs': epochs, 'geometry': geometry
+        })
 
     return pts_list, curvature
 ###########################################################################
@@ -899,6 +774,3 @@ def j_decomposition(Cx, d, power_iters=100):
     signs_tensor = torch.tensor(signs_list, dtype=dtype, device=device)
     evecs_tensor = torch.stack(evecs_list, dim=1)  # each eigenvector as a column
     return evals_tensor, signs_tensor, evecs_tensor
-
-
-
